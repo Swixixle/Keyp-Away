@@ -34,6 +34,36 @@ KeySmith scans **code** for required env vars and checks **OS keychain** plus **
 
 ---
 
+## Quick Start (5 minutes)
+
+```bash
+# 1. Install (from this repo)
+git clone https://github.com/Swixixle/Keyp-Away.git
+cd Keyp-Away
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev,mcp]"
+
+# 2. Scan your project
+cd /path/to/your/project
+keysmith summary
+
+# 3. Set up missing credentials (guided)
+keysmith setup fec
+# Browser → copy key → clipboard / hidden paste → optional health check
+
+# 4. Optionally apply heuristic rotation suggestions for manifest slugs only
+keysmith suggest-rotation --apply
+
+# 5. Install leak protection
+keysmith install-hook
+keysmith scrub-history --dry-run   # preview first; omit --dry-run when ready
+```
+
+Adjust provider slugs (`fec`, `congress_gov`, …) and paths to match your app.
+
+---
+
 ## Architecture
 
 ```
@@ -67,7 +97,7 @@ Responses avoid logging secrets: log redaction and prompts use hidden input wher
 
 ---
 
-## Quick start
+## Install and daily commands
 
 ### Install
 
