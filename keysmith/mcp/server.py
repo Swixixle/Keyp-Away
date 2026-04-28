@@ -32,35 +32,64 @@ def main() -> None:
     ) -> dict[str, object]:
         """Scan project and return credential status (fingerprints — never secrets).
 
-        If ``project_path`` is omitted, uses ``KEYSMITH_DEFAULT_PROJECT`` (default ".").
-        Set ``KEYSMITH_DEFAULT_PROJECT`` in the MCP server's environment (e.g. Claude Desktop config).
+        Args:
+            project_path: Project root directory. If omitted or empty, uses
+                ``KEYSMITH_DEFAULT_PROJECT`` (fallback ``"."``).
+            skip_health: If true, skip provider HTTP health checks.
         """
 
         if project_path is None or project_path.strip() == "":
             project_path = os.getenv("KEYSMITH_DEFAULT_PROJECT", ".")
 
-        root = Path(project_path).expanduser().resolve()
-        manifest = scan_project(root)
-        broker = CredentialBroker()
-        results: dict[str, dict[str, object]] = {}
+        try:
+            path = Path(project_path).expanduser().resolve()
 
-        for name, info in sorted(manifest.credentials.items()):
-            uri = _handle(manifest.project, name)
-            prov = None if skip_health else info.provider
-            st = broker.verify(uri, provider_for_health=prov)
-            results[name] = {
-                "env": info.env,
-                "detected_in": info.detected_in,
-                "provider": info.provider,
-                "scope": info.scope,
-                "handle_uri": uri,
-                "status": st.status,
-                "fingerprint": st.fingerprint,
-                "last_used": st.last_used,
-                "expires": st.expires,
+            if not path.exists():
+                return {
+                    "error": f"Project path does not exist: {project_path}",
+                    "suggested_path": os.getenv("KEYSMITH_DEFAULT_PROJECT"),
+                }
+
+            manifest = scan_project(path)
+            broker = CredentialBroker()
+            creds: dict[str, dict[str, object]] = {}
+
+            for name, info in sorted(manifest.credentials.items()):
+                handle_uri = _handle(manifest.project, name)
+                prov = None if skip_health else info.provider
+                try:
+                    status = broker.verify(handle_uri, provider_for_health=prov)
+                    creds[name] = {
+                        "env": info.env,
+                        "detected_in": info.detected_in,
+                        "provider": info.provider,
+                        "scope": info.scope,
+                        "handle_uri": handle_uri,
+                        "status": status.status,
+                        "fingerprint": status.fingerprint,
+                        "last_used": status.last_used,
+                        "expires": status.expires,
+                    }
+                except Exception as e:
+                    logging.getLogger(__name__).exception("doctor credential check failed slug=%s", name)
+                    creds[name] = {
+                        "env": info.env,
+                        "status": "error",
+                        "error": str(e),
+                    }
+
+            return {
+                "project": manifest.project,
+                "project_path": str(path),
+                "credentials": creds,
             }
 
-        return {"project": manifest.project, "credentials": results}
+        except Exception as e:
+            logging.getLogger(__name__).exception("doctor scan failed")
+            return {
+                "error": f"Failed to scan project: {e!s}",
+                "project_path": project_path,
+            }
 
     @mcp_app.tool()
     async def inject_credential(handle: str, target_env: str) -> dict[str, object]:
