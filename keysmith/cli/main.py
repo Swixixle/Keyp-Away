@@ -118,6 +118,8 @@ def analyze_scopes(project_path: str) -> None:
                 click.echo(f"     • {call.method} {call.endpoint} ({call.file}:{call.line})")
 
         click.echo()
+
+@cli.command("audit-unused")
 @click.option("--days", default=90, type=int, help="Stale threshold in days.")
 def audit_unused(days: int) -> None:
     """List tracked handles not accessed in N+ days (requires prior verify/inject/store)."""
@@ -134,6 +136,130 @@ def audit_unused(days: int) -> None:
         click.echo(handle)
         click.echo(f"  Roughly {days_idle} day(s) since last access")
         click.echo("  Consider rotating or deleting if unused.")
+        click.echo()
+
+
+@cli.command("suggest-rotation")
+@click.option("--project-path", default=".", type=click.Path(exists=True, file_okay=False))
+@click.option(
+    "--apply",
+    is_flag=True,
+    help="Persist suggested policies to ~/.keysmith/rotation.json for manifest credentials only.",
+)
+def suggest_rotation(project_path: str, apply: bool) -> None:
+    """Heuristic rotation intervals from scope scan, registry class, usage ledger, and .env hints."""
+
+    from keysmith.ai.rotation_suggest import RotationSuggestion, suggest_all_rotations
+    from keysmith.rotation.scheduler import RotationScheduler
+
+    root = Path(project_path).resolve()
+    click.echo("Analyzing credentials for rotation suggestions…\n")
+
+    suggestions = suggest_all_rotations(root)
+
+    if not suggestions:
+        click.echo("No registry providers loaded; nothing to score.")
+        raise SystemExit(0)
+
+    manifest = scan_project(root)
+    by_risk: dict[str, list[tuple[str, RotationSuggestion]]] = {
+        "critical": [],
+        "high": [],
+        "medium": [],
+        "low": [],
+    }
+
+    for slug, sug in suggestions.items():
+        by_risk[sug.risk_level].append((slug, sug))
+
+    scheduler = RotationScheduler() if apply else None
+
+    for risk_level in ("critical", "high", "medium", "low"):
+        items = by_risk[risk_level]
+        if not items:
+            continue
+        icon = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}[risk_level]
+        click.echo(f"{icon} {risk_level.upper()} ({len(items)} provider(s))\n")
+
+        for slug, sug_t in sorted(items, key=lambda x: x[0]):
+            click.echo(f"  {slug}")
+            click.echo(f"    Suggested interval: {sug_t.suggested_days} days")
+            click.echo(f"    Confidence: {sug_t.confidence:.0%}")
+            click.echo(f"    {sug_t.reasoning}")
+            if sug_t.factors:
+                click.echo("    Factors:")
+                for f in sug_t.factors:
+                    click.echo(f"      • {f}")
+
+            if apply and scheduler:
+                if slug not in manifest.credentials:
+                    click.echo("    (apply skipped: slug not in scanned manifest)")
+                else:
+                    handle = _handle_for(manifest.project, slug)
+                    scheduler.set_policy(handle=handle, rotation_days=sug_t.suggested_days)
+                    click.echo(f"    Policy applied for {handle}")
+
+            click.echo()
+
+    if not apply:
+        click.echo("Tip: pass --apply to write policies for credentials present in the manifest scan.")
+
+
+@cli.command("ai-groups")
+@click.option("--project-path", default=".", type=click.Path(exists=True, file_okay=False))
+def ai_groups(project_path: str) -> None:
+    """Heuristic groups (tier / region / cloud family) from credential slug names."""
+
+    from keysmith.ai.credential_graph import analyze_credential_relationships
+
+    root = Path(project_path).resolve()
+    click.echo("Analyzing credential slug groupings…\n")
+
+    groups = analyze_credential_relationships(root)
+
+    if not groups:
+        click.echo("No groups detected (need multiple related slugs in the manifest).")
+        return
+
+    for group in groups:
+        relationship_icon = {
+            "tiered_access": "🔐",
+            "regional": "🌍",
+            "service_family": "📦",
+        }.get(group.relationship, "🔗")
+        click.echo(f"{relationship_icon} {group.group_name}")
+        click.echo(f"   Type: {group.relationship}")
+        click.echo(f"   Credentials: {', '.join(group.credentials)}")
+        click.echo(f"   Note: {group.reasoning}")
+        click.echo()
+
+
+@cli.command("ai-anomalies")
+@click.option("--days", default=30, type=int, help="Rough recency horizon for resurfaced-key hints.")
+def ai_anomalies(days: int) -> None:
+    """Flag unusual totals vs ledger span (frequency, quiet credentials touched again)."""
+
+    from keysmith.ai.anomaly_detector import check_for_anomalies
+
+    click.echo(f"Checking usage ledger for anomalies (~{days} day window for recency hints)…\n")
+
+    anomalies = check_for_anomalies(lookback_days=days)
+
+    if not anomalies:
+        click.echo("No anomalies detected (or ledger empty).")
+        return
+
+    n = len(anomalies)
+    click.echo(f"Found {n} anomaly report(s).\n")
+
+    for anomaly in anomalies:
+        severity_icon = {"high": "🔴", "medium": "🟡", "low": "🟢"}.get(anomaly.severity, "⚪")
+        click.echo(f"{severity_icon} {anomaly.handle}")
+        click.echo(f"   Type: {anomaly.anomaly_type}")
+        click.echo(f"   {anomaly.description}")
+        click.echo(f"   Baseline: {anomaly.baseline}")
+        click.echo(f"   Observed: {anomaly.observed}")
+        click.echo(f"   → {anomaly.recommendation}")
         click.echo()
 
 

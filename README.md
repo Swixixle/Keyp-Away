@@ -161,6 +161,9 @@ Restart Claude Desktop after edits. The `doctor` tool returns `project_path`, `e
 | `keysmith scrub-history [--dry-run]` | Remove secret-shaped lines from shell history backups (`.bak`) |
 | `keysmith audit-scope [--project-path DIR]` | Warn if registry lists scopes but code usage looks read-only |
 | `keysmith analyze-scopes [--project-path DIR]` | Infer read/write/admin-ish needs from httpx/requests calls to registry hosts |
+| `keysmith suggest-rotation [--project-path DIR] [--apply]` | Heuristic rotation-day suggestions; optionally write reminders for manifest slugs |
+| `keysmith ai-groups [--project-path DIR]` | Group credentials by slug patterns (tier/region/AWS/GCP-ish) |
+| `keysmith ai-anomalies [--days N]` | Flag coarse ledger outliers (heavy daily rate vs span, resurfaced-quiet keys) |
 | `keysmith audit-unused [--days 90]` | Handles tracked in `~/.keysmith/usage.json` stale N+ days |
 | `keysmith set-rotation <slug> [--days N] [--project-path DIR]` | Rotation reminder cadence (`~/.keysmith/rotation.json`) |
 | `keysmith check-rotation` | Overdue vs next-7-days reminders |
@@ -177,7 +180,43 @@ Restart Claude Desktop after edits. The `doctor` tool returns `project_path`, `e
 
 ## v0.3 feature set
 
-- **`analyze-scopes`** — static scan of Python for `httpx` / `requests` calls whose URLs match registry provider hosts; classifies coarse scope (read/write/admin-shaped paths). Heuristic, offline, no model API.
+- **`analyze-scopes`** — Python `httpx` / `requests` URL scan vs registry hosts; coarse read/write/admin-style paths (offline heuristic).
+- **`suggest-rotation`** — merges scope signals, registry class, ledger counts, `.env` hints; **`--apply`** writes rotation reminders for slugs present in **`scan_project`** only.
+- **`ai-groups`** — slug pattern groups (tier / region / cloud-family-ish).
+- **`ai-anomalies`** — ledger outliers (heavy implied daily rate vs span; resurfaced-quiet patterns). Not replacement for full audit trails.
+
+Everything above is **offline** — no external model API.
+
+---
+
+## AI-style analysis commands
+
+Examples (your output will vary):
+
+### Scope scan
+
+```bash
+keysmith analyze-scopes
+```
+
+### Rotation suggestions
+
+```bash
+keysmith suggest-rotation
+keysmith suggest-rotation --apply
+```
+
+### Credential groups
+
+```bash
+keysmith ai-groups
+```
+
+### Usage anomalies
+
+```bash
+keysmith ai-anomalies
+```
 
 ---
 

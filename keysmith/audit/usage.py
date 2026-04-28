@@ -81,6 +81,10 @@ class UsageTracker:
     def get_usage(self, handle: str) -> CredentialUsage | None:
         return self._load().get(handle)
 
+    def usage_records(self) -> dict[str, CredentialUsage]:
+        """Read-only copy of the persisted usage ledger."""
+        return dict(self._load())
+
 
 def check_unused_credentials(
     *,
