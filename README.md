@@ -155,6 +155,9 @@ Restart Claude Desktop after edits. The `doctor` tool returns `project_path`, `e
 | `keysmith connect <slug\|ENV_NAME> --project-path DIR` | Manual store (hidden prompt) |
 | `keysmith inject <handle_uri> <TARGET_ENV>` | Load keychain secret into `os.environ` |
 | `keysmith mint-admin [--ttl N] [--base-url URL]` | Mint admin JWT and store handle |
+| `keysmith install-hook [--repo-path DIR]` | Git pre-commit hook: block likely staged secrets |
+| `keysmith scrub-history [--dry-run]` | Remove secret-shaped lines from shell history backups (`.bak`) |
+| `keysmith audit-scope [--project-path DIR]` | Warn if registry lists scopes but code usage looks read-only |
 
 ---
 
@@ -204,9 +207,10 @@ ruff check keysmith tests
 
 ## Roadmap (sketch)
 
-- Pre-commit / secret blocking hooks  
-- Stronger rotation and receipt stories  
-- More detection patterns (strict `BaseSettings`, monorepos)
+- Stronger rotation / receipt stories  
+- More detection patterns (strict `BaseSettings`, monorepos)  
+- Unused-credential detection  
+- Optional auto-rotation reminders
 
 ---
 

@@ -11,6 +11,9 @@ providers:
       expected_status: 200
     rotation:
       supported: manual
+    scopes:
+      - read
+      - write
 
   congress_gov:
     name: Congress.gov API
@@ -24,3 +27,6 @@ providers:
       expected_status: 200
     rotation:
       supported: manual
+    scopes:
+      - read
+      - write

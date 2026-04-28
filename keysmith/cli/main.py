@@ -45,6 +45,47 @@ def _env_marked_present(manifest: CredentialManifest, env_var: str) -> bool:
 def cli() -> None:
     """KeySmith — AI credential broker."""
 
+@cli.command("install-hook")
+@click.option("--repo-path", default=".", type=click.Path(exists=True, file_okay=False))
+def install_hook(repo_path: str) -> None:
+    """Install a git pre-commit hook that blocks likely secret literals in staged files."""
+
+    from keysmith.hooks.pre_commit import install_hook as do_install
+
+    do_install(Path(repo_path))
+
+
+@cli.command("scrub-history")
+@click.option("--dry-run", is_flag=True, help="Show what would be removed.")
+def scrub_history(dry_run: bool) -> None:
+    """Remove lines that look like secrets from ~/.bash_history, ~/.zsh_history, …"""
+
+    from keysmith.scrub.history import scrub_all_history
+
+    scrub_all_history(dry_run=dry_run)
+
+
+@cli.command("audit-scope")
+@click.option("--project-path", default=".", type=click.Path(exists=True, file_okay=False))
+def audit_scope(project_path: str) -> None:
+    """Warn when bundled providers list scopes but project usage looks read-only."""
+
+    from keysmith.audit.scope import check_scope_overuse
+
+    warnings = check_scope_overuse(Path(project_path).resolve())
+    if not warnings:
+        click.echo("No heuristic over-scope warnings (see provider registry scopes).")
+        return
+
+    click.echo(f"Potential over-scoping: {len(warnings)}\n")
+
+    for w in warnings:
+        click.echo(w.env_var)
+        click.echo(f"  Assumed issued scope: {w.assumed_key_scope}")
+        click.echo(f"  Code heuristic needs: {w.required_scope}")
+        click.echo(f"  {w.severity}: {w.recommendation}")
+        click.echo()
+
 
 @cli.command("doctor")
 @click.option("--project-path", default=".", type=click.Path(exists=True, file_okay=False))
