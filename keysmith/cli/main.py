@@ -87,6 +87,58 @@ def audit_scope(project_path: str) -> None:
         click.echo()
 
 
+@cli.command("audit-unused")
+@click.option("--days", default=90, type=int, help="Stale threshold in days.")
+def audit_unused(days: int) -> None:
+    """List tracked handles not accessed in N+ days (requires prior verify/inject/store)."""
+
+    from keysmith.audit.usage import check_unused_credentials
+
+    unused = check_unused_credentials(days=days)
+    if not unused:
+        click.echo(f"No handles unused for {days}+ days (of those tracked in ~/.keysmith/usage.json).")
+        return
+
+    click.echo(f"Stale handles (unused {days}+ days): {len(unused)}\n")
+    for handle, days_idle in unused:
+        click.echo(handle)
+        click.echo(f"  Roughly {days_idle} day(s) since last access")
+        click.echo("  Consider rotating or deleting if unused.")
+        click.echo()
+
+
+@cli.command("set-rotation")
+@click.argument("credential_slug")
+@click.option("--days", default=90, type=int, help="Rotate every N days.")
+@click.option("--project-path", default=".", type=click.Path(exists=True, file_okay=False))
+def set_rotation(credential_slug: str, days: int, project_path: str) -> None:
+    """Set a rotation reminder schedule for a manifest credential."""
+
+    from keysmith.rotation.scheduler import RotationScheduler
+
+    path = Path(project_path).resolve()
+    manifest = scan_project(path)
+    slug = _resolve_cred_slug(manifest, credential_slug)
+    if slug is None:
+        click.echo(
+            f"Unknown credential '{credential_slug}'. Run `keysmith doctor` first.",
+            err=True,
+        )
+        raise SystemExit(1)
+    handle = _handle_for(manifest.project, slug)
+    RotationScheduler().set_policy(handle=handle, rotation_days=days)
+    click.echo(f"Rotation schedule set for {handle} (every {max(1, days)} day(s)).")
+
+
+@cli.command("check-rotation")
+def check_rotation() -> None:
+    """Show overdue and upcoming rotation reminders."""
+
+    from keysmith.rotation.scheduler import rotation_cli_main
+
+    raise SystemExit(rotation_cli_main())
+
+
 @cli.command("doctor")
 @click.option("--project-path", default=".", type=click.Path(exists=True, file_okay=False))
 @click.option(

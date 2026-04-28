@@ -158,6 +158,17 @@ Restart Claude Desktop after edits. The `doctor` tool returns `project_path`, `e
 | `keysmith install-hook [--repo-path DIR]` | Git pre-commit hook: block likely staged secrets |
 | `keysmith scrub-history [--dry-run]` | Remove secret-shaped lines from shell history backups (`.bak`) |
 | `keysmith audit-scope [--project-path DIR]` | Warn if registry lists scopes but code usage looks read-only |
+| `keysmith audit-unused [--days 90]` | Handles tracked in `~/.keysmith/usage.json` stale N+ days |
+| `keysmith set-rotation <slug> [--days N] [--project-path DIR]` | Rotation reminder cadence (`~/.keysmith/rotation.json`) |
+| `keysmith check-rotation` | Overdue vs next-7-days reminders |
+
+---
+
+## v0.2 feature set
+
+- Pre-commit staged secret heuristic (`install-hook`), shell-history scrubbing, heuristic over-scope hints  
+- **Usage ledger** — `doctor`/`verify`, `inject`, and `store` bump `~/.keysmith/usage.json` (handles only); `audit-unused` surfaces stale credentials  
+- **Rotation reminders** — local policy JSON (not secrets); auto-rotation deliberately out of scope for now  
 
 ---
 
@@ -178,6 +189,8 @@ Secrets are stored under keyring service name **`keysmith`**, keyed by **`sec://
 - **`present_dotenv`** — not in keychain but variable appears satisfied in layered env files (presence inference)  
 - **`missing`** — neither  
 - **`error`** — keychain / tooling error  
+
+Each successful **read** from the keychain during `verify`, `inject`, or `store` also records the **handle URI + timestamp** under `~/.keysmith/usage.json` (never the secret value).
 
 ### MCP tools
 
@@ -207,10 +220,10 @@ ruff check keysmith tests
 
 ## Roadmap (sketch)
 
-- Stronger rotation / receipt stories  
-- More detection patterns (strict `BaseSettings`, monorepos)  
-- Unused-credential detection  
-- Optional auto-rotation reminders
+- Automated rotation execution (provider-specific)  
+- Receipts / attestations for rotation events  
+- More detection patterns (`BaseSettings`, monorepos)  
+- Richer scope introspection when providers expose token metadata APIs
 
 ---
 

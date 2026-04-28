@@ -11,6 +11,7 @@ from typing import Literal
 
 import keyring
 
+from keysmith.audit.usage import UsageTracker
 from keysmith.logging_config import configure_safe_logging
 from keysmith.providers.loader import run_health_check
 
@@ -43,6 +44,13 @@ class CredentialBroker:
 
     def __init__(self) -> None:
         configure_safe_logging()
+        self._usage = UsageTracker()
+
+    def _record_usage(self, handle_uri: str) -> None:
+        try:
+            self._usage.record_access(handle_uri)
+        except Exception:
+            pass
 
     def verify(
         self,
@@ -62,6 +70,7 @@ class CredentialBroker:
         try:
             raw = keyring.get_password(KEYRING_SERVICE, handle_uri)
             if raw is not None:
+                self._record_usage(handle_uri)
                 fp = _fingerprint(handle_uri, raw)
                 status: Literal[
                     "valid",
@@ -111,12 +120,14 @@ class CredentialBroker:
         raw = keyring.get_password(KEYRING_SERVICE, handle_uri)
         if raw is None:
             return False
+        self._record_usage(handle_uri)
         os.environ[target_env] = raw
         return True
 
     def store(self, handle_uri: str, value: str) -> SecretHandle:
         """Store secret in OS keychain, return opaque handle metadata only."""
         keyring.set_password(KEYRING_SERVICE, handle_uri, value)
+        self._record_usage(handle_uri)
         return SecretHandle(
             uri=handle_uri,
             fingerprint=_fingerprint(handle_uri, value),
