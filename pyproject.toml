@@ -1,6 +1,6 @@
 [project]
 name = "keysmith"
-version = "0.5.1"
+version = "0.5.2"
 description = "Local-first credential workflow for AI-assisted development teams (prototype)"
 authors = [{ name = "Alex Maksimovich", email = "your-email@example.com" }]
 requires-python = ">=3.11"

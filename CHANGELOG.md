@@ -2,6 +2,19 @@
 
 All notable changes to KeySmith will be documented in this file.
 
+## [0.5.2] - 2026-04-28
+
+### Changed (documentation only)
+
+- README and docs reposition KeySmith as a **prototype** suited to individual/small-team dev workflows; removed language that implied production or enterprise certification
+- `docs/THREAT_MODEL.md` — assumptions, in/out-of-scope threats, enforcement limits, bypass paths (`--skip-rotation-check`, direct keychain use)
+- `docs/SECURITY.md` — supported versions and private vulnerability reporting expectations
+- Clarified that rotation **enforcement** is advisory at the KeySmith `inject` boundary, not OS/kernel policy
+
+**No functional or API changes** in this release.
+
+---
+
 ## [0.5.1] - 2026-04-28
 
 ### Added
