@@ -1,0 +1,114 @@
+"""OS keychain broker — opaque handles only; raw values leave only via inject."""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import re
+import uuid
+from dataclasses import dataclass
+from typing import Literal
+
+import keyring
+
+from keysmith.logging_config import configure_safe_logging
+from keysmith.providers.loader import run_health_check
+
+KEYRING_SERVICE = "keysmith"
+
+
+@dataclass(frozen=True)
+class SecretHandle:
+    """Opaque reference to a secret — never carries raw credentials."""
+
+    uri: str
+    fingerprint: str
+    status: Literal["valid", "missing", "invalid", "expired"]
+    last_used: str | None
+    expires: str | None
+
+
+_URI_RE = re.compile(r"^sec://([^/]+)/([^/]+)/([^/]+)$")
+
+
+def _fingerprint(uri: str, secret: str) -> str:
+    h = hashlib.sha256(secret.encode("utf-8")).hexdigest()
+    m = _URI_RE.match(uri)
+    slug = m.group(2) if m else "key"
+    return f"{slug[:8]}_{h[:4]}...{h[-4:]}".lower()
+
+
+class CredentialBroker:
+    """Store and verify credential handles via OS keychain."""
+
+    def __init__(self) -> None:
+        configure_safe_logging()
+
+    def verify(
+        self,
+        handle_uri: str,
+        *,
+        provider_for_health: str | None = None,
+    ) -> SecretHandle:
+        """Check secret status without returning raw value.
+
+        If ``provider_for_health`` is set, validates the stored secret against that
+        provider's health endpoint without exposing raw bytes to callers.
+        """
+        raw = keyring.get_password(KEYRING_SERVICE, handle_uri)
+        if raw is None:
+            return SecretHandle(
+                uri=handle_uri,
+                fingerprint="—",
+                status="missing",
+                last_used=None,
+                expires=None,
+            )
+        fp = _fingerprint(handle_uri, raw)
+        status: Literal["valid", "missing", "invalid", "expired"] = "valid"
+        if provider_for_health:
+            ok = run_health_check(provider_for_health, raw)
+            if not ok:
+                status = "invalid"
+        return SecretHandle(
+            uri=handle_uri,
+            fingerprint=fp,
+            status=status,
+            last_used=None,
+            expires=None,
+        )
+
+    def inject(self, handle_uri: str, target_env: str) -> bool:
+        """Inject secret into environment variable without printing."""
+        raw = keyring.get_password(KEYRING_SERVICE, handle_uri)
+        if raw is None:
+            return False
+        os.environ[target_env] = raw
+        return True
+
+    def store(self, handle_uri: str, value: str) -> SecretHandle:
+        """Store secret in OS keychain, return opaque handle metadata only."""
+        keyring.set_password(KEYRING_SERVICE, handle_uri, value)
+        return SecretHandle(
+            uri=handle_uri,
+            fingerprint=_fingerprint(handle_uri, value),
+            status="valid",
+            last_used=None,
+            expires=None,
+        )
+
+    def rotate(self, handle_uri: str) -> SecretHandle:
+        """Remove stored secret and return metadata for follow-up reconnect."""
+        try:
+            keyring.delete_password(KEYRING_SERVICE, handle_uri)
+        except keyring.errors.PasswordDeleteError:
+            pass
+        suffix = uuid.uuid4().hex[:8]
+        new_uri = f"{handle_uri.rstrip('/')}-rot-{suffix}"
+        return SecretHandle(
+            uri=new_uri,
+            fingerprint="—",
+            status="missing",
+            last_used=None,
+            expires=None,
+        )

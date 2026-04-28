@@ -1,0 +1,1 @@
+"""Project credential scanner."""

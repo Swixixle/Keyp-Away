@@ -1,0 +1,26 @@
+providers:
+  fec:
+    name: Federal Election Commission
+    credential_types: [api_key]
+    automation_level: assisted
+    signup_url: https://api.data.gov/signup/
+    docs_url: https://api.open.fec.gov/developers/
+    health_check:
+      endpoint: https://api.open.fec.gov/v1/candidates/?api_key={key}
+      method: GET
+      expected_status: 200
+    rotation:
+      supported: manual
+
+  congress_gov:
+    name: Congress.gov API
+    credential_types: [api_key]
+    automation_level: assisted
+    signup_url: https://api.data.gov/signup/
+    docs_url: https://api.congress.gov/
+    health_check:
+      endpoint: https://api.congress.gov/v3/bill?api_key={key}&limit=1
+      method: GET
+      expected_status: 200
+    rotation:
+      supported: manual
