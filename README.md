@@ -1,465 +1,498 @@
 # KeySmith
 
-> **Local-first MCP credential broker** — reason about API keys without the model ever receiving raw secrets.
+**Local-first credential workflow for AI-assisted development teams**
 
-**Core principle:** The AI may reason about credentials, but it should never possess credentials.
+KeySmith helps developers using AI coding tools (Cursor, Claude Code, etc.) manage API credentials without accidentally leaking them in chat logs, prompts, or `.env` files.
 
-[![Python](https://img.shields.io/badge/python-3.11+-blue)](https://www.python.org/)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+## ⚠️ Security Status
+
+KeySmith is a **working prototype** suitable for:
+
+- ✅ Personal development workflows  
+- ✅ Small trusted teams (2-5 people)  
+- ✅ Non-critical API credentials  
+- ✅ Learning and experimentation  
+
+KeySmith is **NOT recommended** for:
+
+- ❌ Production secrets at scale  
+- ❌ Regulated environments (HIPAA, SOC2, PCI-DSS)  
+- ❌ High-security contexts  
+- ❌ Adversarial threat models  
+
+**No formal security audit has been performed. Use at your own risk.**
+
+For threat model and security assumptions, see [Threat model](docs/THREAT_MODEL.md). Coordinated disclosure notes live in [Security policy](docs/SECURITY.md).
 
 ---
 
-## What is this?
+## What Problem Does This Solve?
 
-KeySmith helps AI assistants (Claude, ChatGPT via MCP, etc.) **diagnose** missing or misconfigured credentials by returning **handles, fingerprints, and status** — never plaintext keys.
+When building with AI coding assistants, credentials leak through new vectors:
 
-**Problems it targets**
-
-- Manual token flows and hidden failures when env vars are wrong
-- Pasting bearer tokens into chat
-- Local Open Case / adapter projects with many API keys (FEC, Congress.gov, Perplexity, …)
-
-**Example (`keysmith doctor`)**
+**The Problem:**
 
 ```bash
-keysmith doctor --project-path ~/Open-Case
+# Developer working with Claude
+You: "Here's my API key: sk-abc123... can you help debug this?"
+Claude: [Now has your production API key in training data]
 
-# Credential Status
-# ✓ CONGRESS_API_KEY      valid (keychain)     congress_...
-# ○ FEC_API_KEY           present (.env)       —
-# ✗ PERPLEXITY_API_KEY    missing              —
+# Or worse
+git add .env
+git commit -m "quick fix"
+# Oops, API keys in git history forever
 ```
 
-KeySmith scans **code** for required env vars and checks **OS keychain** plus **`.env` / `.env.local` / `.env.example`** for *presence only* (values are never read into LLM payloads).
+**Common pain points:**
+
+- Pasting API keys in AI chat to get help  
+- `.env` files scattered across projects  
+- No idea which credentials are expired/invalid  
+- Team members DM'ing keys in Slack  
+- No rotation discipline  
+- Silent adapter failures (wrong/missing keys)  
+
+**KeySmith's approach:**
+
+- Credentials stay in OS keychain (never in AI context)  
+- AI works with handles (`sec://project/provider/api-key`), not raw secrets  
+- Health checks detect invalid keys before runtime  
+- Git-based team sharing with age-encryption  
+- Rotation reminders with optional enforcement  
+- Cryptographic audit trail (Ed25519 receipts)  
 
 ---
 
-## Quick Start (5 minutes)
-
-```bash
-# 1. Install (from this repo)
-git clone https://github.com/Swixixle/Keyp-Away.git
-cd Keyp-Away
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev,mcp]"
-
-# 2. Scan your project
-cd /path/to/your/project
-keysmith summary
-
-# 3. Set up missing credentials (guided)
-keysmith setup fec
-# Browser → copy key → clipboard / hidden paste → optional health check
-
-# 4. Optionally apply heuristic rotation suggestions for manifest slugs only
-keysmith suggest-rotation --apply
-
-# 5. Install leak protection
-keysmith install-hook
-keysmith scrub-history --dry-run   # preview first; omit --dry-run when ready
-```
-
-Adjust provider slugs (`fec`, `congress_gov`, …) and paths to match your app.
-
----
-
-## Architecture
-
-```
-Claude / ChatGPT (MCP tools)
-       ↓
-KeySmith MCP server (metadata only)
-       ↓
-Credential broker (handles, fingerprints)
-       ↓
-OS keychain (macOS Keychain, Secret Service on Linux, Windows Credential Locker)
-```
-
-**What assistants see**
-
-```json
-{
-  "env": "FEC_API_KEY",
-  "status": "valid_keychain",
-  "fingerprint": "fec_xxxxx...xxxx",
-  "location": "keychain"
-}
-```
-
-**What assistants never receive**
-
-```json
-{ "FEC_API_KEY": "sk-real-secret" }
-```
-
-Responses avoid logging secrets: log redaction and prompts use hidden input where secrets are entered.
-
----
-
-## Install and daily commands
+## Quick Start (5 Minutes)
 
 ### Install
 
 ```bash
 git clone https://github.com/Swixixle/Keyp-Away.git
 cd Keyp-Away
-
 python3 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e ".[dev,mcp]"
+source .venv/bin/activate  # or `.venv\Scripts\activate` on Windows
+pip install -e ".[dev]"
 ```
 
-### Scan a project
+### Scan Your Project
 
 ```bash
-cd /path/to/your/app
+cd ~/your-project
+keysmith summary
+
+# Output:
+# Credential Health Summary: your-project
+# Total credentials detected: 12
+#   ✓ In keychain (validated): 0
+#   ○ In .env files: 5
+#   ✗ Missing: 7
+```
+
+### Set Up a Credential
+
+```bash
+keysmith setup github
+# → Browser opens to GitHub token page
+# → Copy token
+# → KeySmith auto-detects clipboard
+# → Stores in OS keychain
+# → Runs health check
+# ✓ Stored and verified
+```
+
+### View Status
+
+```bash
 keysmith doctor
+
+# ✓ GITHUB_TOKEN          valid (keychain)    ghp_...xJ9K
+# ○ OPENAI_API_KEY        present (.env)      —
+# ✗ ANTHROPIC_API_KEY     missing             —
 ```
 
-Use `--skip-health` to avoid HTTP checks against provider APIs (offline / CI).
-
-### Guided setup (registry provider)
-
-Uses the bundled provider registry (e.g. `fec`, `congress_gov`): optional browser open, masked clipboard offer, hidden paste fallback, then optional HTTP health check.
+### Daily Use
 
 ```bash
-keysmith setup fec --project-path /path/to/your/app
+# Check what's missing
+keysmith summary
+
+# Set up missing credentials
+keysmith setup anthropic
+
+# Check rotation status
+keysmith check-rotation
+
+# View audit trail
+keysmith receipts
 ```
-
-Registry keys are shown if the slug is unknown. The keychain handle uses your **scanned** credential slug when it matches the provider (e.g. `congress` for `congress_gov`).
-
-### Store a key in the keychain (manual, hidden prompt)
-
-```bash
-keysmith connect fec --project-path /path/to/your/app
-```
-
-### Inject a keychain handle into the current process env (no secret printed)
-
-```bash
-keysmith inject 'sec://my-project/fec/api-key' FEC_API_KEY
-```
-
-### Mint a short-lived admin token (Open Case–style)
-
-```bash
-export KEYSMITH_OPEN_CASE_ADMIN_URL=https://your-app.example.com
-keysmith mint-admin --ttl 60
-```
-
-Only the **handle URI and fingerprint** are echoed — not the token body.
 
 ---
+## Core Features
 
-## Claude Desktop (MCP)
+### 1. AI-Safe Credential Handling
 
-Point the MCP server at the venv binary and set a default project root so `doctor` can omit `project_path`:
+**Problem:** AI assistants cannot help with authentication if secrets are withheld from context, yet typing secrets into chat risks exposure.
+
+**Solution:** MCP (Model Context Protocol) integration with opaque handles (`sec://...`) so tools can introspect **presence and lifecycle** without transmitting raw secrets.
+
+**How it works:**
+
+```python
+# In your code
+import os
+
+fec_key = os.getenv("FEC_API_KEY")
+
+# KeySmith scans references, stores secrets in OS keychain, and MCP surfaces handles only:
+# sec://project/fec/api-key
+```
+
+**MCP Integration (Claude Desktop):**
 
 ```json
 {
   "mcpServers": {
     "keysmith": {
-      "command": "/absolute/path/to/Keyp-Away/.venv/bin/keysmith-mcp",
-      "args": [],
+      "command": "/path/to/keysmith-mcp",
       "env": {
-        "KEYSMITH_DEFAULT_PROJECT": "/Users/you/Open-Case"
+        "KEYSMITH_DEFAULT_PROJECT": "/path/to/project"
       }
     }
   }
 }
 ```
 
-Config file (macOS): `~/Library/Application Support/Claude/claude_desktop_config.json`
+### 2. Multi-Signal Scanner
 
-Restart Claude Desktop after edits. The `doctor` tool returns `project_path`, `env_file_vars` (presence map), and per-credential `status` / `location`.
+Detects credential references across common Python idioms plus `.env` / Dockerfile / tests (project-dependent—see manifests and scanner docs).
 
-**Quick checklist**
+### 3. Guided Setup
 
-| Step | Action |
-|------|--------|
-| 1 | `pip install -e ".[mcp]"` so `keysmith-mcp` exists in this repo’s venv |
-| 2 | Put the **absolute** path to `.venv/bin/keysmith-mcp` in `command` |
-| 3 | Set `KEYSMITH_DEFAULT_PROJECT` to your app root so tools can omit `project_path` |
-| 4 | Restart Claude Desktop after every config change |
+Use `keysmith setup <slug>` for browser + clipboard-guided flows toward provider dashboards.
 
-The server is **stdio-only** (no network port). Tools: `doctor`, `inject_credential`, `mint_admin_token` (requires `KEYSMITH_OPEN_CASE_ADMIN_URL` or `OPEN_CASE_ADMIN_URL` for mint).
+### 4. Health Checks
+
+Preferentially validates keychain-held secrets via provider checks when wired in registry (not every provider has an HTTP ping).
+
+### 5. Cryptographic Receipts (v0.4+)
+
+Several lifecycle paths append Ed25519-signed JSON lines under `~/.keysmith/receipts/<project>.jsonl` for connect / inject / rotate / guided-health completion.
+
+See `keysmith receipts` and `--verify`.
+
+### 6. Team Collaboration (v0.5+)
+
+Git-based YAML + `.keysmith/secrets/*.age` ciphertext and repo-local receipts under `.keysmith-receipts/`.
+
+Uses **age** (install separately) — no SaaS prerequisite.
+
+Team policies example (`rotation-policy.yaml`):
+
+```yaml
+policies:
+  fec:
+    rotation_days: 90
+    risk_level: medium
+
+settings:
+  enforce: true          # Block inject when overdue beyond grace
+  grace_period_days: 7
+```
+
+### 7. Rotation Management
+
+Suggestions via `keysmith suggest-rotation` (+ optional `--apply` heuristics).  
+
+**Inject enforcement (opt-in):** YAML `enforce` + reminders in `~/.keysmith/rotation.json`.
+
+**Note:** Enforcement is friction at the KeySmith `inject` boundary, not OS kernel policy. Bypass includes `--skip-rotation-check`. Successful injects emit `credential_injected` receipts, but payloads **do not** currently record bypass vs enforced inject—assume process review rather than relying on receipt metadata alone.
+
+### 8. Usage Tracking & Anomaly Detection
+
+`audit-unused`, `ai-anomalies`, etc.—**offline ledger heuristics** (no upstream LLM API).
+
+---
+## Architecture
+
+### Security Model
+
+**Three layers:**
+
+1. **Storage:** OS keychain (platform-dependent backends).
+2. **Access:** Credential broker + scanners + reminders.
+3. **AI Integration:** MCP returns metadata/handles—not raw secrets from KeySmith-managed paths.
+
+**Key principles:**
+
+- Prefer keychain-backed storage for tooling flows (vs dotenv-only presence checks).  
+- Handles (`sec://...`) travel through docs/MCP/logs more safely than pasted secrets—**not** magic against a determined local attacker.
+
+**Protects partly against:**
+
+- Accidental spills into AI chat/logs (when MCP/handle workflow is respected).  
+- Unclear drift on rotation timelines (human process + reminders).  
+- Receipt tampering (append-only logs with signatures—**local hygiene**, not quorum consensus).
+
+**Does not protect against:**
+
+- Full local compromise (`--skip-rotation-check`, direct keychain access, malware).
+
+See [Threat model](docs/THREAT_MODEL.md).
+
+### Directory Structure
+
+```
+your-project/
+├── .keysmith/
+│   ├── team.yaml
+│   ├── credentials.yaml
+│   ├── rotation-policy.yaml
+│   └── secrets/              # optional age blobs
+├── .keysmith-receipts/
+│   └── events.jsonl          # repo-local team-ish receipts when used
+├── .gitignore               # tailor for secrets/*.age policy
+
+~/.keysmith/
+├── usage.json
+├── receipts/
+│   └── <project>.jsonl
+├── rotation.json
+└── team-identity.age       # decrypt path for shares
+```
 
 ---
 
-## Cryptographic receipts (v0.4)
+## CLI Reference
 
-KeySmith can append **Ed25519-signed JSON lines** for lifecycle events (connect, inject, rotate, guided health check). This is a **local audit trail** — **receipts, not verdicts**: they attest that KeySmith recorded an event, not that a third party blessed it.
+### Core Commands
 
-- **Log:** `~/.keysmith/receipts/<scanned-project>.jsonl` (one JSON object per line)  
-- **Signing key:** stored in the OS keychain under account `receipt-signing-key:<project>` (PEM-encoded Ed25519 private key)  
-- **Payload:** never includes raw secrets — handles, fingerprints, and action labels only  
+| Command | Description |
+|---------|-------------|
+| `keysmith summary` | Overall credential posture |
+| `keysmith doctor` | Detailed scans + statuses |
+| `keysmith setup <provider>` | Guided setup flows |
+| `keysmith connect <provider>` | Manual store prompts |
+| `keysmith inject <handle> <env>` | Inject OS keychain handle into env (optional rotation enforcement) |
+| `keysmith receipts [--verify]` | View or verify receipts |
 
-```bash
-keysmith receipts --project-path /path/to/app
-keysmith receipts --project-path /path/to/app --verify
-```
+### Team Commands (v0.5+)
 
-## Team coordination (git-first, v0.5)
+| Command | Description |
+|---------|-------------|
+| `keysmith team init` | Scaffold YAML + receipts dir + identity |
+| `keysmith team status` | Repo + YAML vs keychain / `.env` `.age` |
+| `keysmith team share <slug>` | Produce `.age`, append team receipts |
+| `keysmith team receive <slug>` | Decrypt ciphertext into OS keychain |
+| `keysmith team check-rotation` | Compare rotation YAML vs local ledger |
 
-No cloud: **commit YAML + optional age files** like any other source. Install [age](https://github.com/FiloSottile/age) for `age` / `age-keygen` on `PATH`.
+### Audit & Analysis
 
-| Path | Purpose |
-|------|---------|
-| `.keysmith/team.yaml` | Members (age pubkeys), defaults, which slugs may be shared |
-| `.keysmith/credentials.yaml` | Optional declared requirements (fills gaps next to code scan) |
-| `.keysmith/rotation-policy.yaml` | Team-authored rotation *targets* vs your local `rotation.json` reminders |
-| `.keysmith/secrets/*.age` | Cipher text you may **commit on purpose** after `keysmith team share <slug>` |
-| `.keysmith-receipts/events.jsonl` | Multi-actor signed receipts (same Ed25519 verifier as `receipts`; optional `actor`) |
+| Command | Description |
+|---------|-------------|
+| `keysmith analyze-scopes` | Heuristic HTTP scopes |
+| `keysmith suggest-rotation` | Suggestions (`--apply` optional) |
+| `keysmith ai-groups` | Pattern-ish grouping story |
+| `keysmith ai-anomalies` | Ledger noise hints |
+| `keysmith audit-unused --days N` | Stale handle hints |
+| `keysmith check-rotation` | Personal backlog |
 
-```bash
-keysmith team init
-keysmith team status
-keysmith team share fec --as you@example.com   # KEYSMITH_TEAM_ACTOR
-keysmith team receive fec
-keysmith team check-rotation
-```
+### Safety Tools
 
-### Git configuration
+| Command | Description |
+|---------|-------------|
+| `keysmith install-hook` | Pre-commit heuristic |
+| `keysmith scrub-history` | Backup + scrub backups |
 
-**What to commit:**
+---
 
-- `.keysmith/team.yaml` — team configuration
-- `.keysmith/credentials.yaml` — required credentials manifest
-- `.keysmith/rotation-policy.yaml` — shared rotation policies
-- `.keysmith-receipts/events.jsonl` — team audit trail
-- `.keysmith/secrets/*.age` — encrypted secrets (**optional**, see modes below)
+## Team Workflow Example
 
-**Recommended `.gitignore`:**
-
-```gitignore
-# KeySmith team secrets (if you prefer NOT to commit encrypted secrets)
-.keysmith/secrets/
-
-# Personal KeySmith data (never commit these)
-.keysmith-local/
-*.key
-team-identity.age
-```
-
-**Two sharing modes**
-
-- **Commit encrypted blobs** — easier onboarding: do **not** ignore `.keysmith/secrets/`; new members `git pull` then `keysmith team receive <slug>`. Fits small trusted teams.
-- **Manual distribution** — add `.keysmith/secrets/` to `.gitignore` and ship `.age` files over another channel (1Password, Signal, …). Fits public repos or stricter policies.
-
-Encrypted age files reveal ciphertext only — still, some organizations forbid *any* secret material in Git; respect your policy.
-
-### Quick start: team setup
-
-Example files live under `examples/team/`.
+### Initial Setup
 
 ```bash
+cd ~/project
 mkdir -p .keysmith
 cp examples/team/team.yaml .keysmith/
 cp examples/team/rotation-policy.yaml .keysmith/
-cp examples/team/.gitignore .
 
-# Edit team.yaml (members + pubkeys)
 vim .keysmith/team.yaml
 
 keysmith team init
-
-# Share your pubkey with the team lead; then commit tracked files
-git add .keysmith/ .gitignore
-git commit -m "Initialize team credential configuration"
+keysmith team share fec
+git add .keysmith/ .keysmith-receipts/
+git commit -m "Initialize team credential sharing"
 git push
 ```
 
----
-
-## CLI commands
-
-| Command | Purpose |
-|--------|---------|
-| `keysmith summary [--project-path DIR] [--skip-health]` | At-a-glance counts + unused/over-scope/rotation notices |
-| `keysmith doctor [--project-path DIR] [--skip-health] [--show-usage]` | Scan code + env; optional last-access hints + rotation backlog |
-| `keysmith rotation-done <slug> [--project-path DIR]` | Mark rotated (advance next reminder; requires `set-rotation` first) |
-| `keysmith setup <registry_key> [--project-path DIR]` | Guided: browser, clipboard or hidden paste, health check |
-| `keysmith connect <slug\|ENV_NAME> --project-path DIR` | Manual store (hidden prompt) |
-| `keysmith inject <handle_uri> <TARGET_ENV> [--project-path DIR] [--skip-rotation-check]` | Load keychain secret into `os.environ`; **blocks** when `rotation-policy.yaml` sets `enforce: true` and `~/.keysmith/rotation.json` is overdue past grace |
-| `keysmith mint-admin [--ttl N] [--base-url URL]` | Mint admin JWT and store handle |
-| `keysmith install-hook [--repo-path DIR]` | Git pre-commit hook: block likely staged secrets |
-| `keysmith scrub-history [--dry-run]` | Remove secret-shaped lines from shell history backups (`.bak`) |
-| `keysmith audit-scope [--project-path DIR]` | Warn if registry lists scopes but code usage looks read-only |
-| `keysmith analyze-scopes [--project-path DIR]` | Infer read/write/admin-ish needs from httpx/requests calls to registry hosts |
-| `keysmith suggest-rotation [--project-path DIR] [--apply]` | Heuristic rotation-day suggestions; optionally write reminders for manifest slugs |
-| `keysmith ai-groups [--project-path DIR]` | Group credentials by slug patterns (tier/region/AWS/GCP-ish) |
-| `keysmith ai-anomalies [--days N]` | Flag coarse ledger outliers (heavy daily rate vs span, resurfaced-quiet keys) |
-| `keysmith audit-unused [--days 90]` | Handles tracked in `~/.keysmith/usage.json` stale N+ days |
-| `keysmith set-rotation <slug> [--days N] [--project-path DIR]` | Rotation reminder cadence (`~/.keysmith/rotation.json`) |
-| `keysmith check-rotation` | Overdue vs next-7-days reminders |
-| `keysmith receipts [--project-path DIR] [--verify]` | Show (and optionally verify) signed JSONL event receipts |
-| `keysmith team init [--project-path DIR]` | Create `.keysmith/*.yaml`, `.keysmith-receipts/`, age identity at `~/.keysmith/team-identity.age` |
-| `keysmith team status` | Team + credentials vs keychain / `.env` / `.age` |
-| `keysmith team share <slug>` | Age-encrypt keychain secret to `.keysmith/secrets/<slug>.age`; team receipt |
-| `keysmith team receive <slug>` | Decrypt committed `.age` into keychain |
-| `keysmith team check-rotation` | Team rotation overview (enforcement, grace vs `inject` blocking) |
-
----
-
-## v0.2 feature set
-
-
-- Pre-commit staged secret heuristic (`install-hook`), shell-history scrubbing, heuristic over-scope hints  
-- **Usage ledger** — `doctor`/`verify`, `inject`, and `store` bump `~/.keysmith/usage.json` (handles only); `audit-unused` surfaces stale credentials  
-- **Rotation reminders** — local policy JSON (not secrets); auto-rotation deliberately out of scope for now  
-
----
-
-## v0.3 feature set
-
-- **`analyze-scopes`** — Python `httpx` / `requests` URL scan vs registry hosts; coarse read/write/admin-style paths (offline heuristic).
-- **`suggest-rotation`** — merges scope signals, registry class, ledger counts, `.env` hints; **`--apply`** writes rotation reminders for slugs present in **`scan_project`** only.
-- **`ai-groups`** — slug pattern groups (tier / region / cloud-family-ish).
-- **`ai-anomalies`** — ledger outliers (heavy implied daily rate vs span; resurfaced-quiet patterns). Not replacement for full audit trails.
-
-Everything above is **offline** — no external model API.
-
----
-
-## v0.4 feature set
-
-- **Cryptographic receipts** — Ed25519-signed append-only JSONL for store / inject / rotate / guided health verification; **`keysmith receipts --verify`** validates signatures offline.
-
----
-
-## v0.5 feature set
-
-- **`keysmith team`** — checked-in `team.yaml`, optional `credentials.yaml` and `rotation-policy.yaml`, **age** ciphertext under `.keysmith/secrets/`, and `.keysmith-receipts/events.jsonl` for credential-share events (Ed25519 + optional `actor`). See [Team coordination (git-first, v0.5)](#team-coordination-git-first-v05).
-
----
-
-## v0.5.1 feature set
-
-- **Git / examples** — `examples/team/` sample configs plus README guidance on ciphertext in-repo vs distributing `.age` out-of-band.
-- **Rotation enforcement** — `inject` respects `.keysmith/rotation-policy.yaml` `settings.enforce` and grace vs `~/.keysmith/rotation.json`; **`--skip-rotation-check`**; **`team check-rotation`** shows BLOCKED alongside policy.
-
----
-
-## AI-style analysis commands
-
-Examples (your output will vary):
-
-### Scope scan
+### New Member
 
 ```bash
-keysmith analyze-scopes
+git clone https://github.com/yourteam/project.git
+cd project
+keysmith team init
+# → share pubkey with lead, wait for team.yaml update
+git pull
+keysmith team receive fec
+keysmith summary
 ```
 
-### Rotation suggestions
+### Daily Ops
 
 ```bash
-keysmith suggest-rotation
-keysmith suggest-rotation --apply
-```
-
-### Credential groups
-
-```bash
-keysmith ai-groups
-```
-
-### Usage anomalies
-
-```bash
-keysmith ai-anomalies
+keysmith team check-rotation
+keysmith setup fec
+keysmith team share fec
+git add .keysmith/secrets/fec.age .keysmith-receipts/
+git commit -m "Rotate FEC credential"
+git push
+# peers: git pull && keysmith team receive fec
 ```
 
 ---
+## AI Features (Offline Heuristics)
 
-## How it works
+**Important:** These are **offline pattern-matching heuristics**, not LLM API calls.
 
-### Scanner
+### Scope Detection
 
-- Python: `os.getenv`, `os.environ`, `Settings.*` heuristics, pytest `skipif`, etc.
-- Files: `.env.example`, `Dockerfile` `ENV`, `requirements*.txt` hints
-- **`.env` stack:** `.env.example` → `.env` → `.env.local` (later overrides). Parser records **presence** (`"present"`) for non-placeholder values only — **values are never surfaced** in MCP/CLI output.
+`keysmith analyze-scopes` inspects httpx/requests usage against registry hosts.
 
-### Broker
+### Rotation Suggestions
 
-Secrets are stored under keyring service name **`keysmith`**, keyed by **`sec://<project>/<slug>/api-key`**. `verify()` can report:
+`keysmith suggest-rotation` merges registry metadata, scope scan, usage ledger, `.env` presence.
 
-- **`valid`** — in keychain; optional provider HTTP health when not skipped  
-- **`invalid`** — keychain value fails health check  
-- **`present_dotenv`** — not in keychain but variable appears satisfied in layered env files (presence inference)  
-- **`missing`** — neither  
-- **`error`** — keychain / tooling error  
+### Credential Grouping
 
-Each successful **read** from the keychain during `verify`, `inject`, or `store` also records the **handle URI + timestamp** under `~/.keysmith/usage.json` (never the secret value).
+`keysmith ai-groups` reports naming-pattern clusters (not cloud IAM magic).
 
-### MCP tools
+### Anomaly Detection
 
-| Tool | Role |
-|------|------|
-| `doctor` | Scan + status (includes `env_file_vars` summary and `credentials[*].status` / `location`) |
-| `inject_credential` | `inject(handle, env_var)` in server process |
-| `mint_admin_token` | Calls configured admin `/admin/token`; stores minted token as handle |
+`keysmith ai-anomalies` reads local usage JSON for coarse dormancy / burst shapes.
+
+**No external model API. No training data. Runs offline.**
 
 ---
 
-## Provider registry
+## Installation
 
-Bundled YAML lists providers such as FEC and Congress.gov (`keysmith/providers/registry.yaml`) with signup URLs and HTTP health probes. Extend the file for additional services.
+### Requirements
 
----
+- **Python 3.11+** (see `pyproject.toml`)
+- macOS, Linux, or Windows (keyring backends vary)
+- Team sharing: install [`age`](https://github.com/FiloSottile/age)
 
-## Development
+### Basic Install
 
 ```bash
-pip install -e ".[dev,mcp]"
+pip install -e "."
+```
+
+### With Development Tools
+
+```bash
+pip install -e ".[dev]"
+```
+
+### With Team Dependencies Group
+
+```bash
+pip install -e ".[team]"   # declares intent; YAML already ships as core dependency
+brew install age # macOS
+```
+
+### MCP (Claude Desktop)
+
+```bash
+pip install -e ".[mcp]"
+```
+
+Point `command` at your venv-resolved `/absolute/path/.venv/bin/keysmith-mcp` and set `KEYSMITH_DEFAULT_PROJECT`.
+
+---
+
+## Provider Registry
+
+`keysmith/providers/registry.yaml` declares docs + health pings + rotation hints—extend freely for non-bundled services.
+
+---
+
+## Testing
+
+```bash
 pytest -q
-ruff check keysmith tests
 ```
 
----
+Current automated tests are **narrow** sanity checks—not a security proof.
 
-## Roadmap (sketch)
-
-- Automated rotation execution (provider-specific)  
-- Receipts / attestations for rotation events  
-- More detection patterns (`BaseSettings`, monorepos)  
-- Richer scope introspection when providers expose token metadata APIs
+Coverage highlights (see `/tests`): broker receipts, scanners, MCP wiring, scheduler edges, representative team flows—**explicitly incomplete** versus adversarial goals.
 
 ---
 
-## Security
+## Limitations & Known Issues
 
-- Treat LLM + tools as **untrusted**; broker and OS keychain are **trusted** for storage.  
-- No raw secrets in MCP JSON, doctor output, or successful connect/mint echoes.  
-- Logging uses redaction filters; avoid `print` in stdio MCP paths (use `logging` to stderr).  
-- Report sensitive issues via [GitHub Security Advisories](https://github.com/Swixixle/Keyp-Away/security) for this repository.
+See [Threat model](docs/THREAT_MODEL.md).
 
----
+High level:
 
-## Philosophy
-
-> Secrets should move through systems with explicit handles — not through chat paste buffers.
-
-KeySmith is **not** a full password manager; it is a **thin orchestration layer** for local dev and AI-assisted workflows.
+1. Not audited end-to-end.  
+2. Enforcement is procedural friction.  
+3. Python-centric scanner fidelity varies by project shape.  
+4. Manual rotations at upstream providers remain your responsibility.
 
 ---
 
-## License
+## Roadmap
 
-See [LICENSE](LICENSE).
+Explicit **non-goals:** managed cloud sync tenancy, sprawling RBAC product, kernel modules.
 
----
-
-## Credits
-
-Built by [Alex Maksimovich](https://github.com/Swixixle) in the **Keyp-Away** repository (KeySmith package). Designed for workflows like **Open Case** civic data adapters.
+Near-term pragmatism: bugfixes, sharper docs/tests, iterative registry growth.
 
 ---
 
 ## Contributing
 
-1. Do **not** log or return raw secret values in PRs.  
-2. Add tests for new scanner patterns or broker behavior.  
-3. Update `keysmith/providers/registry.yaml` when adding provider metadata.
+Issues + small PRs welcome—keep patches focused; include tests when touching behavior knobs.
 
-Issues: [github.com/Swixixle/Keyp-Away/issues](https://github.com/Swixixle/Keyp-Away/issues)
+---
+
+## Philosophy
+
+Receipts attest to **operations KeySmith witnessed**, not third-party attestations—“receipts, not verdicts.”
+
+---
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).
+
+---
+
+## Acknowledgments
+
+Built by Alex Maksimovich — see README history for sibling projects (**Open Case**, **PUBLIC EYE** inspirations).
+
+Credits: **age**, **SOPS**, **1Password** ergonomics inspirations, MCP community.
+
+---
+
+## Support
+
+GitHub Issues / Discussions. **Best effort**—no SLA.
+
+---
+
+## FAQ
+
+**Q: Production-grade?**
+A: **No**—iterate with established secret managers once stakes rise.
+
+**Q: Why not Vault/Doppler/etc.?**
+A: Those excel at centrally governed secrets—KeySmith stitches local dev ergonomics + git coordination + MCP affordances cheaply—but only if the tradeoffs suit you.
+
+**Q: What about CI/CD runners?**
+A: Prefer your platform’s sealed secrets primitives; KeySmith targets interactive developer hosts.
+
+---
+
+**Built with honesty, shipped with humility.**
