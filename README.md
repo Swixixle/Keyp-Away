@@ -1,60 +1,237 @@
 # KeySmith
 
-Local-first credential broker so assistants can reason about API keys via **handles and status**, not raw secrets. Core rule: secrets never appear in MCP tool results, CLI output (except hidden prompts), or logs.
+> **Local-first MCP credential broker** — reason about API keys without the model ever receiving raw secrets.
 
-## Install
+**Core principle:** The AI may reason about credentials, but it should never possess credentials.
 
-Use a virtual environment ([PEP 668](https://peps.python.org/pep-0668/)–safe):
+[![Python](https://img.shields.io/badge/python-3.11+-blue)](https://www.python.org/)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+---
+
+## What is this?
+
+KeySmith helps AI assistants (Claude, ChatGPT via MCP, etc.) **diagnose** missing or misconfigured credentials by returning **handles, fingerprints, and status** — never plaintext keys.
+
+**Problems it targets**
+
+- Manual token flows and hidden failures when env vars are wrong
+- Pasting bearer tokens into chat
+- Local Open Case / adapter projects with many API keys (FEC, Congress.gov, Perplexity, …)
+
+**Example (`keysmith doctor`)**
 
 ```bash
+keysmith doctor --project-path ~/Open-Case
+
+# Credential Status
+# ✓ CONGRESS_API_KEY      valid (keychain)     congress_...
+# ○ FEC_API_KEY           present (.env)       —
+# ✗ PERPLEXITY_API_KEY    missing              —
+```
+
+KeySmith scans **code** for required env vars and checks **OS keychain** plus **`.env` / `.env.local` / `.env.example`** for *presence only* (values are never read into LLM payloads).
+
+---
+
+## Architecture
+
+```
+Claude / ChatGPT (MCP tools)
+       ↓
+KeySmith MCP server (metadata only)
+       ↓
+Credential broker (handles, fingerprints)
+       ↓
+OS keychain (macOS Keychain, Secret Service on Linux, Windows Credential Locker)
+```
+
+**What assistants see**
+
+```json
+{
+  "env": "FEC_API_KEY",
+  "status": "valid_keychain",
+  "fingerprint": "fec_xxxxx...xxxx",
+  "location": "keychain"
+}
+```
+
+**What assistants never receive**
+
+```json
+{ "FEC_API_KEY": "sk-real-secret" }
+```
+
+Responses avoid logging secrets: log redaction and prompts use hidden input where secrets are entered.
+
+---
+
+## Quick start
+
+### Install
+
+```bash
+git clone https://github.com/Swixixle/Keyp-Away.git
+cd Keyp-Away
+
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e ".[dev,mcp]"
 ```
 
-## Commands
-
-Scan a repo and summarize keychain presence (and optional provider HTTP checks):
+### Scan a project
 
 ```bash
-keysmith doctor --project-path /path/to/your/repo
+cd /path/to/your/app
+keysmith doctor
 ```
 
-Store a key interactively (`Paste API key` uses hidden input — nothing echoed):
+Use `--skip-health` to avoid HTTP checks against provider APIs (offline / CI).
+
+### Store a key in the keychain (hidden prompt)
 
 ```bash
-keysmith connect fec --project-path /path/to/your/repo
+keysmith connect fec --project-path /path/to/your/app
 ```
 
-Mint a short-lived admin JWT from Open Case (response JSON must expose a token field):
+### Inject a keychain handle into the current process env (no secret printed)
+
+```bash
+keysmith inject 'sec://my-project/fec/api-key' FEC_API_KEY
+```
+
+### Mint a short-lived admin token (Open Case–style)
 
 ```bash
 export KEYSMITH_OPEN_CASE_ADMIN_URL=https://your-app.example.com
 keysmith mint-admin --ttl 60
 ```
 
-Handles look like `sec://<project>/<slug>/api-key` and live in the OS keychain under service name `keysmith`.
+Only the **handle URI and fingerprint** are echoed — not the token body.
 
-## MCP (Claude Desktop / Cursor)
+---
 
-Install with the `mcp` extra, then configure a stdio server, for example:
+## Claude Desktop (MCP)
 
-`command`: path to `.venv/bin/keysmith-mcp`
+Point the MCP server at the venv binary and set a default project root so `doctor` can omit `project_path`:
 
-Run `pip install "keysmith[mcp]"` in the env that runs the server.
+```json
+{
+  "mcpServers": {
+    "keysmith": {
+      "command": "/absolute/path/to/Keyp-Away/.venv/bin/keysmith-mcp",
+      "args": [],
+      "env": {
+        "KEYSMITH_DEFAULT_PROJECT": "/Users/you/Open-Case"
+      }
+    }
+  }
+}
+```
 
-Set **`KEYSMITH_DEFAULT_PROJECT`** on the MCP process (for example in Claude Desktop’s MCP server `env`) so the `doctor` tool can omit `project_path` and always scan that directory (for example `/Users/alexmaksimovich/Open-Case`).
+Config file (macOS): `~/Library/Application Support/Claude/claude_desktop_config.json`
 
-## Layout
+Restart Claude Desktop after edits. The `doctor` tool returns `project_path`, `env_file_vars` (presence map), and per-credential `status` / `location`.
 
-| Path | Role |
+---
+
+## CLI commands
+
+| Command | Purpose |
+|--------|---------|
+| `keysmith doctor [--project-path DIR] [--skip-health]` | Scan code + env files; keychain + optional provider health |
+| `keysmith connect <slug\|ENV_NAME> --project-path DIR` | Store secret in keychain |
+| `keysmith inject <handle_uri> <TARGET_ENV>` | Load keychain secret into `os.environ` |
+| `keysmith mint-admin [--ttl N] [--base-url URL]` | Mint admin JWT and store handle |
+
+---
+
+## How it works
+
+### Scanner
+
+- Python: `os.getenv`, `os.environ`, `Settings.*` heuristics, pytest `skipif`, etc.
+- Files: `.env.example`, `Dockerfile` `ENV`, `requirements*.txt` hints
+- **`.env` stack:** `.env.example` → `.env` → `.env.local` (later overrides). Parser records **presence** (`"present"`) for non-placeholder values only — **values are never surfaced** in MCP/CLI output.
+
+### Broker
+
+Secrets are stored under keyring service name **`keysmith`**, keyed by **`sec://<project>/<slug>/api-key`**. `verify()` can report:
+
+- **`valid`** — in keychain; optional provider HTTP health when not skipped  
+- **`invalid`** — keychain value fails health check  
+- **`present_dotenv`** — not in keychain but variable appears satisfied in layered env files (presence inference)  
+- **`missing`** — neither  
+- **`error`** — keychain / tooling error  
+
+### MCP tools
+
+| Tool | Role |
 |------|------|
-| `keysmith/scanner/detector.py` | Scans Python, `.env.example`, Dockerfile, `requirements*.txt` |
-| `keysmith/broker/vault.py` | Keychain-backed `CredentialBroker`; `inject` loads `os.environ` only |
-| `keysmith/cli/main.py` | `doctor`, `connect`, `mint-admin` |
-| `keysmith/mcp/server.py` | FastMCP tools (`doctor`, `inject_credential`, `mint_admin_token`) |
-| `keysmith/providers/registry.yaml` | Provider metadata & health URLs |
+| `doctor` | Scan + status (includes `env_file_vars` summary and `credentials[*].status` / `location`) |
+| `inject_credential` | `inject(handle, env_var)` in server process |
+| `mint_admin_token` | Calls configured admin `/admin/token`; stores minted token as handle |
 
-Development: `pytest`, `ruff check keysmith tests`.
+---
 
-Repository history: formerly the placeholder README for **Keyp-Away**.
+## Provider registry
+
+Bundled YAML lists providers such as FEC and Congress.gov (`keysmith/providers/registry.yaml`) with signup URLs and HTTP health probes. Extend the file for additional services.
+
+---
+
+## Development
+
+```bash
+pip install -e ".[dev,mcp]"
+pytest -q
+ruff check keysmith tests
+```
+
+---
+
+## Roadmap (sketch)
+
+- Pre-commit / secret blocking hooks  
+- Stronger rotation and receipt stories  
+- More detection patterns (strict `BaseSettings`, monorepos)
+
+---
+
+## Security
+
+- Treat LLM + tools as **untrusted**; broker and OS keychain are **trusted** for storage.  
+- No raw secrets in MCP JSON, doctor output, or successful connect/mint echoes.  
+- Logging uses redaction filters; avoid `print` in stdio MCP paths (use `logging` to stderr).  
+- Report sensitive issues via [GitHub Security Advisories](https://github.com/Swixixle/Keyp-Away/security) for this repository.
+
+---
+
+## Philosophy
+
+> Secrets should move through systems with explicit handles — not through chat paste buffers.
+
+KeySmith is **not** a full password manager; it is a **thin orchestration layer** for local dev and AI-assisted workflows.
+
+---
+
+## License
+
+See [LICENSE](LICENSE).
+
+---
+
+## Credits
+
+Built by [Alex Maksimovich](https://github.com/Swixixle) in the **Keyp-Away** repository (KeySmith package). Designed for workflows like **Open Case** civic data adapters.
+
+---
+
+## Contributing
+
+1. Do **not** log or return raw secret values in PRs.  
+2. Add tests for new scanner patterns or broker behavior.  
+3. Update `keysmith/providers/registry.yaml` when adding provider metadata.
+
+Issues: [github.com/Swixixle/Keyp-Away/issues](https://github.com/Swixixle/Keyp-Away/issues)

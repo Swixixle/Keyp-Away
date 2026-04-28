@@ -37,6 +37,10 @@ def _resolve_cred_slug(manifest: CredentialManifest, name: str) -> str | None:
     return None
 
 
+def _env_marked_present(manifest: CredentialManifest, env_var: str) -> bool:
+    return manifest.env_file_vars.get(env_var.upper()) == "present"
+
+
 @click.group()
 def cli() -> None:
     """KeySmith — AI credential broker."""
@@ -60,15 +64,31 @@ def doctor(project_path: str, skip_health: bool) -> None:
     computed: list[tuple[CredentialEntry, str, SecretHandle]] = []
     for cred_name, cred_info in sorted(manifest.credentials.items()):
         handle = _handle_for(manifest.project, cred_name)
+        in_env = _env_marked_present(manifest, cred_info.env)
         prov = cred_info.provider if not skip_health else None
-        st = broker.verify(handle, provider_for_health=prov)
-        sym = "✓" if st.status == "valid" else "✗"
-        click.echo(f"{sym} {cred_info.env:30} {st.status:10} {st.fingerprint}")
+        st = broker.verify(
+            handle,
+            provider_for_health=prov,
+            dotenv_reports_present=in_env,
+        )
+        if st.status == "valid":
+            sym, label = "✓", "valid (keychain)"
+        elif st.status == "present_dotenv":
+            sym, label = "○", "present (.env)"
+        elif st.status == "invalid":
+            sym, label = "✗", "invalid"
+        elif st.status == "error":
+            sym, label = "✗", "error"
+        else:
+            sym, label = "✗", "missing"
+
+        click.echo(f"{sym} {cred_info.env:30} {label:22} {st.fingerprint}")
         computed.append((cred_info, cred_name, st))
 
     click.echo("\nSuggested fixes:")
     for cred_info, slug, st in computed:
-        if st.status == "missing":
+        in_env = _env_marked_present(manifest, cred_info.env)
+        if st.status == "missing" and not in_env:
             click.echo(f"  keysmith connect {slug} --project-path {path}")
         elif st.status == "invalid" and cred_info.provider:
             su = get_signup_url(str(cred_info.provider))
@@ -100,6 +120,22 @@ def connect(credential_name: str, project_path: str) -> None:
     secret = click.prompt("Paste API key", hide_input=True)
     out = broker.store(handle, secret)
     click.echo(f"✓ Stored — {out.uri}  fingerprint {out.fingerprint}")
+
+
+@cli.command("inject")
+@click.argument("handle_uri")
+@click.argument("target_env")
+def inject(handle_uri: str, target_env: str) -> None:
+    """Load a keychain-backed handle into TARGET_ENV for this shell process."""
+    broker = CredentialBroker()
+    ok = broker.inject(handle_uri, target_env)
+    if not ok:
+        click.echo(
+            "Failed: unknown handle or no secret stored in OS keychain for this URI.",
+            err=True,
+        )
+        raise SystemExit(1)
+    click.echo(f"✓ Loaded into environment variable {target_env}")
 
 
 @cli.command("mint-admin")

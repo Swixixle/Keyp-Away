@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import logging
 import re
 from pathlib import Path
 
@@ -274,6 +275,89 @@ _EXCLUDE_DIRS = frozenset(
 )
 
 
+_LOGGER = logging.getLogger(__name__)
+
+# Later .env layers override earlier (.env.example → .env → .env.local).
+_ENV_LAYER_FILES = [".env.example", ".env", ".env.local"]
+
+_PLACEHOLDER_TOKENS_LOWER = frozenset(
+    {
+        "",
+        "your-key-here",
+        "replace_me",
+        "changeme",
+        "todo",
+        "xxx",
+        "placeholder",
+        "sk_test_xxx",
+    },
+)
+
+
+def _strip_env_value_quotes(raw: str) -> str:
+    s = raw.strip()
+    if len(s) >= 2:
+        if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+            return s[1:-1].strip()
+    return s.strip()
+
+
+def _is_placeholder_env_value(value: str) -> bool:
+    v = value.strip()
+    if not v:
+        return True
+    low = v.lower()
+    if low in _PLACEHOLDER_TOKENS_LOWER:
+        return True
+    if low.startswith("<your") or low.startswith("${") or low == "...":
+        return True
+    return False
+
+
+def _parse_env_presence_single(path: Path) -> dict[str, str]:
+    """Parse one env file → upper key → literal ``present`` (never secret bytes)."""
+    out: dict[str, str] = {}
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        _LOGGER.warning("could not read %s: %s", path, e)
+        return out
+
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, _, val_part = line.partition("=")
+        k = key.strip()
+        if not k:
+            continue
+        normalized = k.upper().replace("-", "_")
+        stripped = _strip_env_value_quotes(val_part)
+        if not _is_placeholder_env_value(stripped):
+            out[normalized] = "present"
+    return out
+
+
+def read_env_file(project_root: Path) -> dict[str, str]:
+    """Read existing env files for **presence** only (order: example → .env → .env.local).
+
+    Returns ``var_name_upper -> \"present\"``. Never includes actual values.
+    """
+    merged: dict[str, str] = {}
+    for name in _ENV_LAYER_FILES:
+        env_path = project_root / name
+        if not env_path.is_file():
+            continue
+        try:
+            merged.update(_parse_env_presence_single(env_path))
+        except Exception as e:  # noqa: BLE001
+            _LOGGER.warning("could not read %s: %s", env_path, e)
+
+    return merged
+
+
 def _scan_dir_ok(path: Path) -> bool:
     return not any(part in _EXCLUDE_DIRS for part in path.parts)
 
@@ -343,4 +427,10 @@ def scan_project(root_path: Path) -> CredentialManifest:
     for ent in credential_map.values():
         ent.detected_in = sorted(set(ent.detected_in))
 
-    return CredentialManifest(project=project_name, credentials=credential_map)
+    env_file_vars = read_env_file(root)
+
+    return CredentialManifest(
+        project=project_name,
+        credentials=credential_map,
+        env_file_vars=env_file_vars,
+    )

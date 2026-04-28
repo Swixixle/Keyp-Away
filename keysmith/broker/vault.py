@@ -23,7 +23,7 @@ class SecretHandle:
 
     uri: str
     fingerprint: str
-    status: Literal["valid", "missing", "invalid", "expired"]
+    status: Literal["valid", "missing", "invalid", "expired", "present_dotenv", "error"]
     last_used: str | None
     expires: str | None
 
@@ -49,14 +49,47 @@ class CredentialBroker:
         handle_uri: str,
         *,
         provider_for_health: str | None = None,
+        dotenv_reports_present: bool = False,
     ) -> SecretHandle:
         """Check secret status without returning raw value.
 
-        If ``provider_for_health`` is set, validates the stored secret against that
-        provider's health endpoint without exposing raw bytes to callers.
+        If ``provider_for_health`` is set, validates keychain-backed secret against that
+        provider when a secret exists — never uploads .env-derived material.
+
+        If there is **no** keychain entry but ``dotenv_reports_present`` is true,
+        reports ``present_dotenv`` (presence only — no fingerprint of file contents).
         """
-        raw = keyring.get_password(KEYRING_SERVICE, handle_uri)
-        if raw is None:
+        try:
+            raw = keyring.get_password(KEYRING_SERVICE, handle_uri)
+            if raw is not None:
+                fp = _fingerprint(handle_uri, raw)
+                status: Literal[
+                    "valid",
+                    "missing",
+                    "invalid",
+                    "expired",
+                    "present_dotenv",
+                    "error",
+                ] = "valid"
+                if provider_for_health:
+                    ok = run_health_check(provider_for_health, raw)
+                    if not ok:
+                        status = "invalid"
+                return SecretHandle(
+                    uri=handle_uri,
+                    fingerprint=fp,
+                    status=status,
+                    last_used=None,
+                    expires=None,
+                )
+            if dotenv_reports_present:
+                return SecretHandle(
+                    uri=handle_uri,
+                    fingerprint="—",
+                    status="present_dotenv",
+                    last_used=None,
+                    expires=None,
+                )
             return SecretHandle(
                 uri=handle_uri,
                 fingerprint="—",
@@ -64,19 +97,14 @@ class CredentialBroker:
                 last_used=None,
                 expires=None,
             )
-        fp = _fingerprint(handle_uri, raw)
-        status: Literal["valid", "missing", "invalid", "expired"] = "valid"
-        if provider_for_health:
-            ok = run_health_check(provider_for_health, raw)
-            if not ok:
-                status = "invalid"
-        return SecretHandle(
-            uri=handle_uri,
-            fingerprint=fp,
-            status=status,
-            last_used=None,
-            expires=None,
-        )
+        except Exception:
+            return SecretHandle(
+                uri=handle_uri,
+                fingerprint="—",
+                status="error",
+                last_used=None,
+                expires=None,
+            )
 
     def inject(self, handle_uri: str, target_env: str) -> bool:
         """Inject secret into environment variable without printing."""

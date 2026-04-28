@@ -20,3 +20,5 @@ class CredentialManifest(BaseModel):
 
     project: str
     credentials: dict[str, CredentialEntry] = Field(default_factory=dict)
+    # Uppercase env var name -> literal "present" (never holds secret bytes)
+    env_file_vars: dict[str, str] = Field(default_factory=dict)

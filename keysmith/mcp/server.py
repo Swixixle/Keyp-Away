@@ -56,31 +56,60 @@ def main() -> None:
 
             for name, info in sorted(manifest.credentials.items()):
                 handle_uri = _handle(manifest.project, name)
+                in_env_file = manifest.env_file_vars.get(info.env.upper()) == "present"
                 prov = None if skip_health else info.provider
                 try:
-                    status = broker.verify(handle_uri, provider_for_health=prov)
+                    status = broker.verify(
+                        handle_uri,
+                        provider_for_health=prov,
+                        dotenv_reports_present=in_env_file,
+                    )
+                    if status.status == "valid":
+                        final_status = "valid_keychain"
+                        location = "keychain"
+                    elif status.status == "present_dotenv":
+                        final_status = "present_env_file"
+                        location = "dotenv"
+                    elif status.status == "invalid":
+                        final_status = "invalid"
+                        location = "keychain"
+                    elif status.status == "error":
+                        final_status = "error"
+                        location = "none"
+                    else:
+                        final_status = "missing"
+                        location = "none"
+
                     creds[name] = {
                         "env": info.env,
                         "detected_in": info.detected_in,
                         "provider": info.provider,
                         "scope": info.scope,
                         "handle_uri": handle_uri,
-                        "status": status.status,
-                        "fingerprint": status.fingerprint,
+                        "status": final_status,
+                        "location": location,
+                        "fingerprint": status.fingerprint
+                        if status.status in ("valid", "invalid", "present_dotenv")
+                        else "",
                         "last_used": status.last_used,
                         "expires": status.expires,
+                        "in_env_file": in_env_file,
                     }
                 except Exception as e:
                     logging.getLogger(__name__).exception("doctor credential check failed slug=%s", name)
                     creds[name] = {
                         "env": info.env,
                         "status": "error",
+                        "final_status": "error",
+                        "location": "none",
                         "error": str(e),
+                        "in_env_file": in_env_file,
                     }
 
             return {
                 "project": manifest.project,
                 "project_path": str(path),
+                "env_file_vars": manifest.env_file_vars,
                 "credentials": creds,
             }
 

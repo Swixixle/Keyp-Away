@@ -34,3 +34,13 @@ def test_inject_sets_env_var() -> None:
     assert os.environ.get("FEC_API_KEY") == "supersecret-value"
     os.environ.clear()
     os.environ.update(old)
+
+
+def test_verify_present_dotenv_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "keysmith.broker.vault.keyring.get_password",
+        lambda service, uri: None,
+    )
+    broker = CredentialBroker()
+    r = broker.verify("sec://p/fec/api-key", dotenv_reports_present=True)
+    assert r.status == "present_dotenv"
