@@ -54,16 +54,20 @@ class ReceiptSigner:
         event_type: str,
         handle: str,
         metadata: dict[str, Any],
+        *,
+        actor: str | None = None,
     ) -> dict[str, Any]:
         timestamp = utc_now_iso()
 
-        event = {
+        event: dict[str, Any] = {
             "event_type": event_type,
             "handle": handle,
             "metadata": metadata,
             "timestamp": timestamp,
             "project": self.project_name,
         }
+        if actor:
+            event["actor"] = actor
         canonical = json.dumps(event, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
         receipt = dict(event)
@@ -77,10 +81,10 @@ class ReceiptSigner:
         try:
             signature_hex = receipt["signature"]
             public_key_hex = receipt["public_key"]
-            canonical_keys = frozenset(
-                ("event_type", "handle", "metadata", "timestamp", "project")
+            allowed = frozenset(
+                {"event_type", "handle", "metadata", "timestamp", "project", "actor"}
             )
-            event = {k: v for k, v in receipt.items() if k in canonical_keys}
+            event = {k: v for k, v in receipt.items() if k in allowed}
             canonical = json.dumps(event, sort_keys=True, separators=(",", ":")).encode(
                 "utf-8"
             )
@@ -137,3 +141,28 @@ class ReceiptLog:
             else:
                 invalid += 1
         return valid, invalid
+
+
+class TeamReceiptLog:
+    """Checked-in team audit log under ``.keysmith-receipts/events.jsonl``."""
+
+    def __init__(self, project_root: Path) -> None:
+        self.project_root = Path(project_root).resolve()
+        self.log_path = self.project_root / ".keysmith-receipts" / "events.jsonl"
+
+    def append(self, receipt: dict[str, Any]) -> None:
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.log_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(receipt, ensure_ascii=False) + "\n")
+
+    def read_all(self) -> list[dict[str, Any]]:
+        if not self.log_path.exists():
+            return []
+        rows: list[dict[str, Any]] = []
+        with self.log_path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                rows.append(json.loads(line))
+        return rows

@@ -200,6 +200,26 @@ keysmith receipts --project-path /path/to/app
 keysmith receipts --project-path /path/to/app --verify
 ```
 
+## Team coordination (git-first, v0.5)
+
+No cloud: **commit YAML + optional age files** like any other source. Install [age](https://github.com/FiloSottile/age) for `age` / `age-keygen` on `PATH`.
+
+| Path | Purpose |
+|------|---------|
+| `.keysmith/team.yaml` | Members (age pubkeys), defaults, which slugs may be shared |
+| `.keysmith/credentials.yaml` | Optional declared requirements (fills gaps next to code scan) |
+| `.keysmith/rotation-policy.yaml` | Team-authored rotation *targets* vs your local `rotation.json` reminders |
+| `.keysmith/secrets/*.age` | Cipher text you may **commit on purpose** after `keysmith team share <slug>` |
+| `.keysmith-receipts/events.jsonl` | Multi-actor signed receipts (same Ed25519 verifier as `receipts`; optional `actor`) |
+
+```bash
+keysmith team init
+keysmith team status
+keysmith team share fec --as you@example.com   # KEYSMITH_TEAM_ACTOR
+keysmith team receive fec
+keysmith team check-rotation
+```
+
 ---
 
 ## CLI commands
@@ -224,6 +244,11 @@ keysmith receipts --project-path /path/to/app --verify
 | `keysmith set-rotation <slug> [--days N] [--project-path DIR]` | Rotation reminder cadence (`~/.keysmith/rotation.json`) |
 | `keysmith check-rotation` | Overdue vs next-7-days reminders |
 | `keysmith receipts [--project-path DIR] [--verify]` | Show (and optionally verify) signed JSONL event receipts |
+| `keysmith team init [--project-path DIR]` | Create `.keysmith/*.yaml`, `.keysmith-receipts/`, age identity at `~/.keysmith/team-identity.age` |
+| `keysmith team status` | Team + credentials vs keychain / `.env` / `.age` |
+| `keysmith team share <slug>` | Age-encrypt keychain secret to `.keysmith/secrets/<slug>.age`; team receipt |
+| `keysmith team receive <slug>` | Decrypt committed `.age` into keychain |
+| `keysmith team check-rotation` | Compare `rotation-policy.yaml` to local rotation reminders |
 
 ---
 
@@ -249,6 +274,12 @@ Everything above is **offline** — no external model API.
 ## v0.4 feature set
 
 - **Cryptographic receipts** — Ed25519-signed append-only JSONL for store / inject / rotate / guided health verification; **`keysmith receipts --verify`** validates signatures offline.
+
+---
+
+## v0.5 feature set
+
+- **`keysmith team`** — checked-in `team.yaml`, optional `credentials.yaml` and `rotation-policy.yaml`, **age** ciphertext under `.keysmith/secrets/`, and `.keysmith-receipts/events.jsonl` for credential-share events (Ed25519 + optional `actor`). See [Team coordination (git-first, v0.5)](#team-coordination-git-first-v05).
 
 ---
 

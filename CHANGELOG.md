@@ -2,6 +2,20 @@
 
 All notable changes to KeySmith will be documented in this file.
 
+## [0.5.0] - 2026-04-27
+
+### Added
+
+- **`keysmith team`** — git-checked `.keysmith/team.yaml`, optional `credentials.yaml` and `rotation-policy.yaml`, **age**-encrypted blobs under `.keysmith/secrets/` (requires `age` on `PATH`)
+- **`~/.keysmith/team-identity.age`** for decrypting shares; `team init` generates an age keypair
+- **`.keysmith-receipts/events.jsonl`** — mergeable signed share events (**`TeamReceiptLog`**) with optional **`actor`** (`--as` / `KEYSMITH_TEAM_ACTOR`)
+- Receipt signing supports optional **`actor`** in canonical payload verification
+- Optional **`[team]`** extra (`pip install -e ".[team]"`) — declare-only; **`PyYAML`** is already core
+
+### Changed
+
+- Version bumped to **0.5.0**
+
 ## [0.4.0] - 2026-04-28
 
 ### Added

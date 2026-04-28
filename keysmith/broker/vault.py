@@ -44,6 +44,11 @@ def project_from_handle_uri(handle_uri: str) -> str | None:
     return m.group(1) if m else None
 
 
+def slug_from_handle_uri(handle_uri: str) -> str | None:
+    m = _URI_RE.match(handle_uri.strip())
+    return m.group(2) if m else None
+
+
 class CredentialBroker:
     """Store and verify credential handles via OS keychain."""
 

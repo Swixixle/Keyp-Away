@@ -16,6 +16,8 @@ from keysmith.models import CredentialEntry, CredentialManifest
 from keysmith.providers.loader import get_signup_url
 from keysmith.scanner.detector import scan_project
 
+from keysmith.cli.team_cmd import team_cli
+
 configure_safe_logging()
 _ROOT = logging.getLogger()
 if not any(isinstance(f, SecretRedactionFilter) for f in _ROOT.filters):
@@ -665,4 +667,7 @@ def mint_admin(ttl: int, base_url: str | None) -> None:
     h = broker.store(handle_uri, raw.strip())
     click.echo(f"✓ Stored admin token handle: {h.uri}")
     click.echo(f"  fingerprint {h.fingerprint}")
+
+
+cli.add_command(team_cli)
 

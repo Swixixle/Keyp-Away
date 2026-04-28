@@ -44,3 +44,9 @@ def test_verify_present_dotenv_only(monkeypatch: pytest.MonkeyPatch) -> None:
     broker = CredentialBroker()
     r = broker.verify("sec://p/fec/api-key", dotenv_reports_present=True)
     assert r.status == "present_dotenv"
+
+
+def test_slug_from_handle_uri() -> None:
+    from keysmith.broker.vault import slug_from_handle_uri
+
+    assert slug_from_handle_uri("sec://open-case/fec/api-key") == "fec"

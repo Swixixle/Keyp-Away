@@ -50,3 +50,20 @@ def test_receipt_jsonl_roundtrip(memory_keyring: None, tmp_path: Path) -> None:
     assert len(loaded) == 1
     signer_check = ReceiptSigner("p2")
     assert signer_check.verify_receipt(loaded[0]) is True
+
+
+def test_sign_with_actor(memory_keyring: None) -> None:
+    signer = ReceiptSigner("p3")
+    r = signer.sign_event("credential_shared", "sec://p3/fec/api-key", {"k": 1}, actor="a@ex.com")
+    assert r.get("actor") == "a@ex.com"
+    assert signer.verify_receipt(r) is True
+
+
+def test_team_receipt_log_append(memory_keyring: None, tmp_path: Path) -> None:
+    from keysmith.receipts.signing import TeamReceiptLog
+
+    signer = ReceiptSigner("proj")
+    log = TeamReceiptLog(tmp_path)
+    r = signer.sign_event("e", "h", {})
+    log.append(r)
+    assert log.read_all()[0]["handle"] == "h"
