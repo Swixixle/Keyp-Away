@@ -88,7 +88,36 @@ def audit_scope(project_path: str) -> None:
         click.echo()
 
 
-@cli.command("audit-unused")
+@cli.command("analyze-scopes")
+@click.option("--project-path", default=".", type=click.Path(exists=True, file_okay=False))
+def analyze_scopes(project_path: str) -> None:
+    """Infer coarse API scope needs from Python httpx/requests usage toward registry hosts."""
+
+    from keysmith.ai.scope_analyzer import analyze_all_scopes
+
+    root = Path(project_path).resolve()
+    click.echo("Analyzing HTTP usage patterns toward registry provider hosts…\n")
+
+    results = analyze_all_scopes(root)
+
+    if not results:
+        click.echo("No API usage detected for bundled providers (or only low-confidence defaults).")
+        return
+
+    for provider_slug, requirement in sorted(results.items()):
+        confidence_icon = "🟢" if requirement.confidence > 0.8 else "🟡"
+
+        click.echo(f"{confidence_icon} {provider_slug}")
+        click.echo(f"   Required scope: {requirement.required_scope}")
+        click.echo(f"   Confidence: {requirement.confidence:.0%}")
+        click.echo(f"   Reasoning: {requirement.reasoning}")
+
+        if requirement.evidence:
+            click.echo(f"   Evidence: {len(requirement.evidence)} API call(s)")
+            for call in requirement.evidence[:2]:
+                click.echo(f"     • {call.method} {call.endpoint} ({call.file}:{call.line})")
+
+        click.echo()
 @click.option("--days", default=90, type=int, help="Stale threshold in days.")
 def audit_unused(days: int) -> None:
     """List tracked handles not accessed in N+ days (requires prior verify/inject/store)."""

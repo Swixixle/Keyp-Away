@@ -160,6 +160,7 @@ Restart Claude Desktop after edits. The `doctor` tool returns `project_path`, `e
 | `keysmith install-hook [--repo-path DIR]` | Git pre-commit hook: block likely staged secrets |
 | `keysmith scrub-history [--dry-run]` | Remove secret-shaped lines from shell history backups (`.bak`) |
 | `keysmith audit-scope [--project-path DIR]` | Warn if registry lists scopes but code usage looks read-only |
+| `keysmith analyze-scopes [--project-path DIR]` | Infer read/write/admin-ish needs from httpx/requests calls to registry hosts |
 | `keysmith audit-unused [--days 90]` | Handles tracked in `~/.keysmith/usage.json` stale N+ days |
 | `keysmith set-rotation <slug> [--days N] [--project-path DIR]` | Rotation reminder cadence (`~/.keysmith/rotation.json`) |
 | `keysmith check-rotation` | Overdue vs next-7-days reminders |
@@ -171,6 +172,12 @@ Restart Claude Desktop after edits. The `doctor` tool returns `project_path`, `e
 - Pre-commit staged secret heuristic (`install-hook`), shell-history scrubbing, heuristic over-scope hints  
 - **Usage ledger** — `doctor`/`verify`, `inject`, and `store` bump `~/.keysmith/usage.json` (handles only); `audit-unused` surfaces stale credentials  
 - **Rotation reminders** — local policy JSON (not secrets); auto-rotation deliberately out of scope for now  
+
+---
+
+## v0.3 feature set
+
+- **`analyze-scopes`** — static scan of Python for `httpx` / `requests` calls whose URLs match registry provider hosts; classifies coarse scope (read/write/admin-shaped paths). Heuristic, offline, no model API.
 
 ---
 
