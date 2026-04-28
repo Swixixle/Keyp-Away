@@ -89,7 +89,17 @@ keysmith doctor
 
 Use `--skip-health` to avoid HTTP checks against provider APIs (offline / CI).
 
-### Store a key in the keychain (hidden prompt)
+### Guided setup (registry provider)
+
+Uses the bundled provider registry (e.g. `fec`, `congress_gov`): optional browser open, masked clipboard offer, hidden paste fallback, then optional HTTP health check.
+
+```bash
+keysmith setup fec --project-path /path/to/your/app
+```
+
+Registry keys are shown if the slug is unknown. The keychain handle uses your **scanned** credential slug when it matches the provider (e.g. `congress` for `congress_gov`).
+
+### Store a key in the keychain (manual, hidden prompt)
 
 ```bash
 keysmith connect fec --project-path /path/to/your/app
@@ -141,7 +151,8 @@ Restart Claude Desktop after edits. The `doctor` tool returns `project_path`, `e
 | Command | Purpose |
 |--------|---------|
 | `keysmith doctor [--project-path DIR] [--skip-health]` | Scan code + env files; keychain + optional provider health |
-| `keysmith connect <slug\|ENV_NAME> --project-path DIR` | Store secret in keychain |
+| `keysmith setup <registry_key> [--project-path DIR]` | Guided: browser, clipboard or hidden paste, health check |
+| `keysmith connect <slug\|ENV_NAME> --project-path DIR` | Manual store (hidden prompt) |
 | `keysmith inject <handle_uri> <TARGET_ENV>` | Load keychain secret into `os.environ` |
 | `keysmith mint-admin [--ttl N] [--base-url URL]` | Mint admin JWT and store handle |
 

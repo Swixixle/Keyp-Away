@@ -98,6 +98,18 @@ def doctor(project_path: str, skip_health: bool) -> None:
                 click.echo(f"  Replace or renew {cred_info.env}")
 
 
+@cli.command("setup")
+@click.argument("provider_slug")
+@click.option("--project-path", default=".", type=click.Path(exists=True, file_okay=False))
+def setup(provider_slug: str, project_path: str) -> None:
+    """Guided setup: open signup URL (optional), clipboard or hidden paste, then health check."""
+
+    from keysmith.cli.guided import guided_setup
+
+    if not guided_setup(provider_slug, Path(project_path)):
+        raise click.Abort()
+
+
 @cli.command("connect")
 @click.argument("credential_name")
 @click.option("--project-path", default=".", type=click.Path(exists=True, file_okay=False))

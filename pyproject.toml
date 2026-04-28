@@ -10,6 +10,7 @@ dependencies = [
     "pyyaml>=6.0",
     "keyring>=24.0.0",
     "httpx>=0.27.0",
+    "pyperclip>=1.8.0",
 ]
 
 [project.optional-dependencies]
