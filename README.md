@@ -106,9 +106,19 @@ keysmith setup github
 ```bash
 keysmith doctor
 
-# ✓ GITHUB_TOKEN          valid (keychain)    ghp_...xJ9K
-# ○ OPENAI_API_KEY        present (.env)      —
-# ✗ ANTHROPIC_API_KEY     missing             —
+# ✓ FEC_API_KEY                valid (keychain)    fec_abcd...   ✓ health OK
+# ○ OPENAI_API_KEY              present (.env)      —
+# ✗ ANTHROPIC_API_KEY           missing             —
+```
+
+### Generate credential manifest
+
+```bash
+keysmith generate-manifest
+# Writes .keysmith/credentials.yaml with scan results, optional HTTP status, scopes, refs
+
+git add .keysmith/credentials.yaml
+git commit -m "Track credential manifest"
 ```
 
 ### Daily Use
@@ -173,7 +183,7 @@ Use `keysmith setup <slug>` for browser + clipboard-guided flows toward provider
 
 ### 4. Health Checks
 
-Preferentially validates keychain-held secrets via provider checks when wired in registry (not every provider has an HTTP ping).
+Bundled registry entries may define HTTP proofs; **`doctor`** / **`summary`** call them **by default** for keychain-held secrets (`--skip-health` for scripted/offline scans). Providers without probes still annotate **`(no HTTP probe)`** in `doctor` so keys are not misclassified as unhealthy.
 
 ### 5. Cryptographic Receipts (v0.4+)
 
@@ -269,8 +279,11 @@ your-project/
 
 | Command | Description |
 |---------|-------------|
-| `keysmith summary` | Overall credential posture |
-| `keysmith doctor` | Detailed scans + statuses |
+| `keysmith summary` | Overall credential posture **with HTTP validation** when bundled providers advertise probes |
+| `keysmith summary --skip-health` | Skip probes (offline / CI scripting) |
+| `keysmith doctor` | Detailed status **including health annotations** when probes exist |
+| `keysmith doctor --skip-health` | Presence-only scans (offline) |
+| `keysmith generate-manifest` | Emit `.keysmith/credentials.yaml` snapshot from scans |
 | `keysmith setup <provider>` | Guided setup flows |
 | `keysmith connect <provider>` | Manual store prompts |
 | `keysmith inject <handle> <env>` | Inject OS keychain handle into env (optional rotation enforcement) |

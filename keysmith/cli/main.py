@@ -48,6 +48,19 @@ def _broker_for_manifest(path: Path) -> CredentialBroker:
     return CredentialBroker(project_name=scan_project(path.resolve()).project)
 
 
+def _sharing_hint(slug: str, provider: dict) -> str:
+    slug_l = slug.lower()
+    name = str(provider.get("name", "")).lower()
+    cats = provider.get("credential_types") if isinstance(provider.get("credential_types"), list) else []
+    if "gov" in slug_l or "fec" in slug_l or "congress" in slug_l:
+        return "allowed"
+    if "government" in name or "commission" in name or "election" in name:
+        return "allowed"
+    if cats and any(str(c).lower() in {"public_api", "government_api"} for c in cats):
+        return "allowed"
+    return "forbidden"
+
+
 @click.group()
 def cli() -> None:
     """KeySmith — AI credential broker."""
@@ -393,10 +406,16 @@ def rotation_done(credential_slug: str, project_path: str) -> None:
 
 @cli.command("summary")
 @click.option("--project-path", default=".", type=click.Path(exists=True, file_okay=False))
-@click.option("--skip-health", is_flag=True, help="Skip provider HTTP checks (faster).")
+@click.option(
+    "--skip-health",
+    is_flag=True,
+    help="Skip provider HTTP health validation (offline / CI scripts).",
+)
 def summary(project_path: str, skip_health: bool) -> None:
-    """At-a-glance credential posture for this scanned project."""
+    """At-a-glance credential posture; runs HTTP validation when bundled providers expose checks.
 
+    Health probes are enabled by default — pass ``--skip-health`` only when deliberately offline/faster scans.
+    """
     from keysmith.audit.scope import check_scope_overuse
     from keysmith.audit.usage import check_unused_credentials
     from keysmith.rotation.scheduler import check_rotation_status
@@ -406,13 +425,16 @@ def summary(project_path: str, skip_health: bool) -> None:
     broker = CredentialBroker()
 
     in_keychain = in_env_only = invalid_or_err = missing = 0
+    prefix = f"sec://{manifest.project}/"
+    proj = manifest.project
+
     for cred_name, cred_info in sorted(manifest.credentials.items()):
         handle = _handle_for(manifest.project, cred_name)
         in_env = _env_marked_present(manifest, cred_info.env)
-        prov = cred_info.provider if not skip_health else None
+        prov_for = None if skip_health else (cred_info.provider or cred_name)
         st = broker.verify(
             handle,
-            provider_for_health=prov,
+            provider_for_health=prov_for,
             dotenv_reports_present=in_env,
         )
         if st.status == "valid":
@@ -425,27 +447,24 @@ def summary(project_path: str, skip_health: bool) -> None:
             missing += 1
 
     total = len(manifest.credentials)
-    proj = manifest.project
+
     click.echo(f"Credential health summary: {proj}\n")
     click.echo(f"Total credentials detected: {total}")
     click.echo(f"  ✓ In keychain (validated): {in_keychain}")
-    click.echo(f"  ○ In .env files: {in_env_only}")
     if invalid_or_err:
-        click.echo(f"  ⚠️  Invalid/error: {invalid_or_err}")
+        click.echo(f"  ⚠️ Invalid/error: {invalid_or_err}")
+    click.echo(f"  ○ In .env files: {in_env_only}")
     click.echo(f"  ✗ Missing: {missing}")
     click.echo()
 
     issues: list[str] = []
     unused = check_unused_credentials(days=90)
-    prefix = f"sec://{proj}/"
     unused_here = [(h, d) for h, d in unused if h.startswith(prefix)]
     if unused_here:
-        issues.append(f"{len(unused_here)} stale handle(s) in usage.json (90d+) for this project")
-
+        issues.append(f"{len(unused_here)} credential(s) unused for 90+ days (usage ledger)")
     scopes = check_scope_overuse(path)
     if scopes:
-        issues.append(f"{len(scopes)} possible over-scope warning(s) (heuristic)")
-
+        issues.append(f"{len(scopes)} over-scoped credential(s) (heuristic)")
     rot = check_rotation_status()
     overdue_here = [p for p in rot["overdue"] if p.handle.startswith(prefix)]
     upcoming_here = [p for p in rot["upcoming"] if p.handle.startswith(prefix)]
@@ -453,18 +472,140 @@ def summary(project_path: str, skip_health: bool) -> None:
         issues.append(f"🔴 {len(overdue_here)} credential(s) overdue for rotation")
     elif upcoming_here:
         issues.append(f"🟡 {len(upcoming_here)} credential(s) due soon")
+    if invalid_or_err:
+        issues.append(f"⚠️ {invalid_or_err} credential(s) failed health check or errored")
 
     if issues:
         click.echo("Issues found:")
         for line in issues:
             click.echo(f"  ⚠️  {line}")
         click.echo()
-        click.echo("Run specific audit commands for details:")
+        click.echo("Run specific commands for details:")
+        click.echo("  keysmith doctor")
         click.echo("  keysmith audit-unused")
-        click.echo("  keysmith audit-scope")
         click.echo("  keysmith check-rotation")
     else:
         click.echo("✅ No issues detected")
+
+    if skip_health:
+        click.echo(
+            "\n💡 Tip: Health checks skipped. Run without --skip-health to validate credentials against providers."
+        )
+
+
+@cli.command("generate-manifest")
+@click.option("--project-path", default=".", type=click.Path(exists=True, file_okay=False))
+@click.option(
+    "--output",
+    "-o",
+    default=".keysmith/credentials.yaml",
+    help="Destination path (.keysmith/credentials.yaml by default)",
+)
+@click.option(
+    "--skip-health",
+    is_flag=True,
+    help="Emit status without running bundled HTTP probes",
+)
+def generate_manifest_cmd(project_path: str, output: str, skip_health: bool) -> None:
+    """Generate ``credentials.yaml`` from the scanned manifest (hand-editable afterward)."""
+
+    import yaml as _yaml
+
+    from keysmith.providers.loader import load_provider_registry, provider_has_health_check
+
+    root = Path(project_path).resolve()
+    manifest = scan_project(root)
+    registry = load_provider_registry().get("providers", {})
+    broker = CredentialBroker()
+    rp = sorted(manifest.credentials.items())
+
+    click.echo(f"🔍 Scanning {root}")
+    click.echo(f"Found {len(rp)} credential(s)\n")
+
+    manifest_blob: dict[str, object] = {
+        "project": manifest.project,
+        "generated": datetime.now().isoformat(timespec="seconds"),
+        "credentials": {},
+    }
+    credentials_out: dict[str, object] = {}
+    analyzer = None
+    for cred_slug, cred_info in rp:
+        handle = _handle_for(manifest.project, cred_slug)
+        prov_key = cred_info.provider or cred_slug
+        pdata = registry.get(cred_slug) or registry.get(prov_key) or {}
+
+        scope_str = "unknown"
+        try:
+            from keysmith.ai.scope_analyzer import ScopeAnalyzer
+
+            analyzer = analyzer or ScopeAnalyzer(root)
+            try:
+                req = analyzer.analyze_provider(cred_slug)
+                scope_str = req.required_scope
+            except ValueError:
+                pass
+        except Exception:
+            pass
+
+        prov_for_health = None if skip_health else prov_key
+        st = broker.verify(
+            handle,
+            provider_for_health=prov_for_health,
+            dotenv_reports_present=_env_marked_present(manifest, cred_info.env),
+        )
+
+        click.echo(f"  {cred_slug}: {st.status}")
+
+        entry: dict[str, object] = {
+            "env": cred_info.env,
+            "provider": cred_slug,
+            "scope": scope_str,
+            "status": st.status,
+        }
+        has_hc = provider_has_health_check(prov_key) if prov_key else False
+        entry["probe"] = {"http_health_check_available": has_hc, "skipped": skip_health}
+
+        if isinstance(pdata.get("docs_url"), str):
+            entry["docs_url"] = pdata["docs_url"]
+        if isinstance(pdata.get("signup_url"), str):
+            entry["signup_url"] = pdata["signup_url"]
+
+        rotation = pdata.get("rotation") if isinstance(pdata.get("rotation"), dict) else {}
+        if isinstance(rotation.get("recommended_days"), int):
+            entry["rotation_days"] = rotation["recommended_days"]
+        if rotation.get("risk_level"):
+            entry["risk_level"] = rotation["risk_level"]
+
+        req_files = list(cred_info.required_for or cred_info.detected_in)
+        if req_files:
+            entry["required_for"] = sorted(req_files)
+
+        envs = {"local": "optional", "staging": "optional", "production": "optional"}
+        if st.status in ("valid", "invalid"):
+            envs["staging"] = "required"
+            envs["production"] = "required"
+        entry["environments"] = envs
+
+        entry["sharing"] = _sharing_hint(cred_slug, pdata)
+
+        credentials_out[cred_slug] = entry
+
+    manifest_blob["credentials"] = credentials_out
+
+    out_path = Path(output)
+    out_abs = out_path if out_path.is_absolute() else (root / out_path)
+    out_abs.parent.mkdir(parents=True, exist_ok=True)
+    text = _yaml.safe_dump(manifest_blob, sort_keys=False, allow_unicode=True, default_flow_style=False)
+    out_abs.write_text(text, encoding="utf-8")
+
+    try:
+        rel_arg = out_abs.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        rel_arg = str(out_abs.resolve())
+    click.echo("\nNext steps:")
+    click.echo(f"  git add {rel_arg}")
+    click.echo("  git commit -m \"Add credentials manifest\"")
+    click.echo("\n💡 Tip: Check this file into git once reviewed.")
 
 
 @cli.command("doctor")
@@ -472,7 +613,7 @@ def summary(project_path: str, skip_health: bool) -> None:
 @click.option(
     "--skip-health",
     is_flag=True,
-    help="Only check keychain presence, not provider HTTP health.",
+    help="Skip provider HTTP probes (offline / CI only).",
 )
 @click.option(
     "--show-usage",
@@ -480,13 +621,14 @@ def summary(project_path: str, skip_health: bool) -> None:
     help="Append last-access ages and project-scoped rotation backlog.",
 )
 def doctor(project_path: str, skip_health: bool, show_usage: bool) -> None:
-    """Scan project and show credential status."""
+    """Scan credential status; HTTP probes run when registry entries include health endpoints."""
+
+    from keysmith.audit.usage import UsageTracker
+    from keysmith.providers.loader import provider_has_health_check
 
     path = Path(project_path).resolve()
     manifest = scan_project(path)
     broker = CredentialBroker()
-
-    from keysmith.audit.usage import UsageTracker
 
     usage_tracker = UsageTracker() if show_usage else None
 
@@ -498,24 +640,36 @@ def doctor(project_path: str, skip_health: bool, show_usage: bool) -> None:
     for cred_name, cred_info in sorted(manifest.credentials.items()):
         handle = _handle_for(manifest.project, cred_name)
         in_env = _env_marked_present(manifest, cred_info.env)
-        prov = cred_info.provider if not skip_health else None
+        prov_key = cred_info.provider or cred_name
+        prov_for = None if skip_health else prov_key
         st = broker.verify(
             handle,
-            provider_for_health=prov,
+            provider_for_health=prov_for,
             dotenv_reports_present=in_env,
         )
+
+        has_hc = bool(prov_key) and provider_has_health_check(prov_key) and not skip_health
+
         if st.status == "valid":
             sym, label = "✓", "valid (keychain)"
         elif st.status == "present_dotenv":
             sym, label = "○", "present (.env)"
         elif st.status == "invalid":
-            sym, label = "✗", "invalid"
+            sym, label = "✗", "invalid (keychain)"
         elif st.status == "error":
             sym, label = "✗", "error"
         else:
             sym, label = "✗", "missing"
 
-        line = f"{sym} {cred_info.env:30} {label:22} {st.fingerprint}"
+        line = f"{sym} {cred_info.env:30} {label:28} {st.fingerprint}"
+        if has_hc:
+            if st.status == "valid":
+                line += "  ✓ health OK"
+            elif st.status == "invalid":
+                line += "  ✗ health failed"
+        elif not skip_health and st.status == "valid" and prov_key:
+            line += "  (no HTTP probe)"
+
         if usage_tracker:
             usage = usage_tracker.get_usage(handle)
             if usage:
@@ -546,7 +700,7 @@ def doctor(project_path: str, skip_health: bool, show_usage: bool) -> None:
     for cred_info, slug, st in computed:
         in_env = _env_marked_present(manifest, cred_info.env)
         if st.status == "missing" and not in_env:
-            fixes.append(f"  keysmith connect {slug} --project-path {path}")
+            fixes.append(f"  keysmith setup {slug} --project-path {path}")
         elif st.status == "invalid" and cred_info.provider:
             su = get_signup_url(str(cred_info.provider))
             if su:
@@ -558,6 +712,9 @@ def doctor(project_path: str, skip_health: bool, show_usage: bool) -> None:
         click.echo("\nSuggested fixes:")
         for row in fixes:
             click.echo(row)
+
+    if skip_health:
+        click.echo("\n💡 Tip: Health checks skipped. Run without --skip-health to validate credentials.")
 
 
 @cli.command("setup")

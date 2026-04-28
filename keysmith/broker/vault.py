@@ -17,7 +17,6 @@ import yaml
 
 from keysmith.audit.usage import UsageTracker
 from keysmith.logging_config import configure_safe_logging
-from keysmith.providers.loader import run_health_check
 
 KEYRING_SERVICE = "keysmith"
 
@@ -167,9 +166,12 @@ class CredentialBroker:
                     "error",
                 ] = "valid"
                 if provider_for_health:
-                    ok = run_health_check(provider_for_health, raw)
-                    if not ok:
-                        status = "invalid"
+                    from keysmith.providers.loader import provider_has_health_check, run_health_check
+
+                    if provider_has_health_check(provider_for_health):
+                        ok = run_health_check(provider_for_health, raw)
+                        if not ok:
+                            status = "invalid"
                 return SecretHandle(
                     uri=handle_uri,
                     fingerprint=fp,

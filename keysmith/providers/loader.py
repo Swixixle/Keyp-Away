@@ -51,6 +51,14 @@ def get_signup_url(provider_key: str) -> str | None:
     return pdata.get("signup_url")
 
 
+def provider_has_health_check(provider_key: str) -> bool:
+    """Return True if registry defines an HTTP probe for ``provider_key``."""
+    registry = load_provider_registry()
+    pdata = registry.get("providers", {}).get(provider_key, {})
+    hc = pdata.get("health_check") if isinstance(pdata.get("health_check"), dict) else {}
+    return bool(hc.get("endpoint"))
+
+
 def run_health_check(provider_key: str, api_key: str) -> bool:
     """Verify key against provider health endpoint. Never logs the secret."""
     configure_provider_logging_safe()

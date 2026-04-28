@@ -2,6 +2,29 @@
 
 All notable changes to KeySmith will be documented in this file.
 
+## [0.6.0] - 2026-04-28
+
+### Changed — Breaking (default UX)
+
+**`doctor` / `summary` now emphasize HTTP probes by default.**
+
+- When registry entries advertise `health_check` endpoints, keychain-held secrets invoke them automatically.
+- Credentials without probes stay **valid** (annotated `(no HTTP probe)` in doctor) instead of being mis-labelled unhealthy.
+- Use **`--skip-health`** wherever you previously relied on fast/offline snapshots (CI scripting, airplanes, etc.).
+- **`summary`** now surfaces **`⚠️ Invalid/error`** distinctly from **`✗ Missing`**.
+
+Implementation detail: **`CredentialBroker.verify`** skips HTTP probes unless the bundled registry declares an endpoint (see **`provider_has_health_check`**).
+
+### Added
+
+- **`keysmith generate-manifest`** — emits `.keysmith/credentials.yaml` snapshots (scan-derived env names, probes metadata, inferred scope tiers, hints for git review)
+
+### Migration
+
+Previously you may have leaned on **`--skip-health` by accident** whenever you wanted quieter output; that flag is now explicitly the offline switch. Omit it for truthful validation loops.
+
+---
+
 ## [0.5.2] - 2026-04-28
 
 ### Changed (documentation only)
