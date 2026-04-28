@@ -1,6 +1,6 @@
 [project]
 name = "keysmith"
-version = "0.3.1"
+version = "0.4.0"
 description = "AI credential broker - reason about secrets without possessing them"
 authors = [{ name = "Alex Maksimovich", email = "your-email@example.com" }]
 requires-python = ">=3.11"
@@ -11,6 +11,7 @@ dependencies = [
     "keyring>=24.0.0",
     "httpx>=0.27.0",
     "pyperclip>=1.8.0",
+    "cryptography>=41.0.0",
 ]
 
 [project.optional-dependencies]

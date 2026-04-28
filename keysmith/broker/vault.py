@@ -7,7 +7,7 @@ import os
 import re
 import uuid
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 import keyring
 
@@ -39,12 +39,34 @@ def _fingerprint(uri: str, secret: str) -> str:
     return f"{slug[:8]}_{h[:4]}...{h[-4:]}".lower()
 
 
+def project_from_handle_uri(handle_uri: str) -> str | None:
+    m = _URI_RE.match(handle_uri)
+    return m.group(1) if m else None
+
+
 class CredentialBroker:
     """Store and verify credential handles via OS keychain."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, project_name: str | None = None) -> None:
         configure_safe_logging()
         self._usage = UsageTracker()
+        self._receipt_signer = None
+        self._receipt_log = None
+        if project_name:
+            from keysmith.receipts.signing import ReceiptLog, ReceiptSigner
+
+            self._receipt_signer = ReceiptSigner(project_name)
+            self._receipt_log = ReceiptLog(project_name)
+
+    def publish_receipt(self, event_type: str, handle_uri: str, metadata: dict[str, Any]) -> None:
+        """Append a signed local receipt when ``project_name`` was passed at construction."""
+        if not self._receipt_signer or not self._receipt_log:
+            return
+        try:
+            r = self._receipt_signer.sign_event(event_type, handle_uri, metadata)
+            self._receipt_log.append(r)
+        except Exception:
+            pass
 
     def _record_usage(self, handle_uri: str) -> None:
         try:
@@ -122,19 +144,32 @@ class CredentialBroker:
             return False
         self._record_usage(handle_uri)
         os.environ[target_env] = raw
+        fp = _fingerprint(handle_uri, raw)
+        self.publish_receipt(
+            "credential_injected",
+            handle_uri,
+            {"target_env": target_env, "fingerprint": fp},
+        )
         return True
 
     def store(self, handle_uri: str, value: str) -> SecretHandle:
         """Store secret in OS keychain, return opaque handle metadata only."""
         keyring.set_password(KEYRING_SERVICE, handle_uri, value)
         self._record_usage(handle_uri)
-        return SecretHandle(
+        fp = _fingerprint(handle_uri, value)
+        out = SecretHandle(
             uri=handle_uri,
-            fingerprint=_fingerprint(handle_uri, value),
+            fingerprint=fp,
             status="valid",
             last_used=None,
             expires=None,
         )
+        self.publish_receipt(
+            "credential_connected",
+            handle_uri,
+            {"fingerprint": fp, "action": "store"},
+        )
+        return out
 
     def rotate(self, handle_uri: str) -> SecretHandle:
         """Remove stored secret and return metadata for follow-up reconnect."""
@@ -144,6 +179,11 @@ class CredentialBroker:
             pass
         suffix = uuid.uuid4().hex[:8]
         new_uri = f"{handle_uri.rstrip('/')}-rot-{suffix}"
+        self.publish_receipt(
+            "credential_rotated",
+            handle_uri,
+            {"action": "detach", "suggested_followup_uri": new_uri},
+        )
         return SecretHandle(
             uri=new_uri,
             fingerprint="—",

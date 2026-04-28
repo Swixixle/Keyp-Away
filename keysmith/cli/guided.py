@@ -119,7 +119,7 @@ def guided_setup(registry_key: str, project_path: Path) -> bool:
         click.echo("No secret entered; aborted.", err=True)
         return False
 
-    broker = CredentialBroker()
+    broker = CredentialBroker(project_name=manifest.project)
     handle = f"sec://{manifest.project}/{slug}/api-key"
     result = broker.store(handle, secret.strip())
     click.echo()
@@ -137,6 +137,15 @@ def guided_setup(registry_key: str, project_path: Path) -> bool:
             click.echo("   Health check: OK")
         else:
             click.echo("   Health check failed or unreachable — verify the key in the dashboard.")
+        broker.publish_receipt(
+            "credential_verified",
+            handle,
+            {
+                "provider": registry_key,
+                "health_check": "passed" if ok else "failed",
+                "fingerprint": result.fingerprint,
+            },
+        )
     click.echo()
 
     click.echo("=" * 60)

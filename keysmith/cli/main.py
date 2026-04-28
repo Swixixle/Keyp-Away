@@ -10,7 +10,7 @@ from pathlib import Path
 import click
 import httpx
 
-from keysmith.broker.vault import CredentialBroker, SecretHandle
+from keysmith.broker.vault import CredentialBroker, SecretHandle, project_from_handle_uri
 from keysmith.logging_config import SecretRedactionFilter, configure_safe_logging
 from keysmith.models import CredentialEntry, CredentialManifest
 from keysmith.providers.loader import get_signup_url
@@ -40,6 +40,10 @@ def _resolve_cred_slug(manifest: CredentialManifest, name: str) -> str | None:
 
 def _env_marked_present(manifest: CredentialManifest, env_var: str) -> bool:
     return manifest.env_file_vars.get(env_var.upper()) == "present"
+
+
+def _broker_for_manifest(path: Path) -> CredentialBroker:
+    return CredentialBroker(project_name=scan_project(path.resolve()).project)
 
 
 @click.group()
@@ -260,6 +264,67 @@ def ai_anomalies(days: int) -> None:
         click.echo(f"   Baseline: {anomaly.baseline}")
         click.echo(f"   Observed: {anomaly.observed}")
         click.echo(f"   → {anomaly.recommendation}")
+        click.echo()
+
+
+@cli.command("receipts")
+@click.option("--project-path", default=".", type=click.Path(exists=True, file_okay=False))
+@click.option(
+    "--verify",
+    "do_verify",
+    is_flag=True,
+    help="Verify Ed25519 signatures on every line in the JSONL log.",
+)
+def receipts_cmd(project_path: str, do_verify: bool) -> None:
+    """Show or verify append-only signed credential event receipts for the scanned project."""
+
+    from keysmith.receipts.signing import ReceiptSigner, ReceiptLog
+
+    root = Path(project_path).resolve()
+    manifest = scan_project(root)
+    receipt_log = ReceiptLog(manifest.project)
+    all_receipts = receipt_log.read_all()
+
+    if not all_receipts:
+        click.echo("No receipts found for this project.")
+        click.echo("Receipts are recorded when you connect, inject, rotate, or complete guided health checks.")
+        return
+
+    signer = ReceiptSigner(manifest.project)
+
+    verify_map: dict[int, bool] = {}
+    if do_verify:
+        click.echo("Verifying receipt signatures…\n")
+        for i, r in enumerate(all_receipts):
+            verify_map[i] = signer.verify_receipt(r)
+        valid = sum(1 for v in verify_map.values() if v)
+        invalid = len(all_receipts) - valid
+        click.echo(f"✓ {valid} valid receipt(s)")
+        if invalid:
+            click.echo(f"✗ {invalid} invalid receipt(s) (log may be tampered or key rotated)")
+        click.echo()
+
+    click.echo(f"Credential event receipts: {manifest.project}\n")
+    icons = {
+        "credential_connected": "🔗",
+        "credential_rotated": "🔄",
+        "credential_verified": "✓",
+        "credential_injected": "💉",
+    }
+
+    for i, receipt in enumerate(all_receipts):
+        event_type = str(receipt.get("event_type", ""))
+        icon = icons.get(event_type, "📝")
+        ts = receipt.get("timestamp", "")
+        click.echo(f"{icon} {ts}")
+        click.echo(f"   Event: {event_type}")
+        click.echo(f"   Handle: {receipt.get('handle', '')}")
+        meta = receipt.get("metadata") or {}
+        if isinstance(meta, dict) and "fingerprint" in meta:
+            click.echo(f"   Fingerprint: {meta['fingerprint']}")
+        if do_verify:
+            ok = verify_map[i]
+            click.echo(f"   Signature: {'✓ valid' if ok else '✗ invalid'}")
         click.echo()
 
 
@@ -512,7 +577,7 @@ def connect(credential_name: str, project_path: str) -> None:
     """Store a credential in the OS keychain (input hidden)."""
     path = Path(project_path).resolve()
     manifest = scan_project(path)
-    broker = CredentialBroker()
+    broker = _broker_for_manifest(path)
     slug = _resolve_cred_slug(manifest, credential_name)
     if slug is None:
         click.echo(
@@ -534,7 +599,8 @@ def connect(credential_name: str, project_path: str) -> None:
 @click.argument("target_env")
 def inject(handle_uri: str, target_env: str) -> None:
     """Load a keychain-backed handle into TARGET_ENV for this shell process."""
-    broker = CredentialBroker()
+    proj = project_from_handle_uri(handle_uri)
+    broker = CredentialBroker(project_name=proj) if proj else CredentialBroker()
     ok = broker.inject(handle_uri, target_env)
     if not ok:
         click.echo(
@@ -592,9 +658,10 @@ def mint_admin(ttl: int, base_url: str | None) -> None:
         click.echo("JSON did not include a token field this CLI understands.", err=True)
         raise SystemExit(1)
 
-    project = Path.cwd().resolve().name
+    manifest = scan_project(Path.cwd().resolve())
+    project = manifest.project
     handle_uri = _handle_for(project, "open-case-admin-token")
-    broker = CredentialBroker()
+    broker = CredentialBroker(project_name=manifest.project)
     h = broker.store(handle_uri, raw.strip())
     click.echo(f"✓ Stored admin token handle: {h.uri}")
     click.echo(f"  fingerprint {h.fingerprint}")

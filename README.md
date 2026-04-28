@@ -174,6 +174,32 @@ Config file (macOS): `~/Library/Application Support/Claude/claude_desktop_config
 
 Restart Claude Desktop after edits. The `doctor` tool returns `project_path`, `env_file_vars` (presence map), and per-credential `status` / `location`.
 
+**Quick checklist**
+
+| Step | Action |
+|------|--------|
+| 1 | `pip install -e ".[mcp]"` so `keysmith-mcp` exists in this repo’s venv |
+| 2 | Put the **absolute** path to `.venv/bin/keysmith-mcp` in `command` |
+| 3 | Set `KEYSMITH_DEFAULT_PROJECT` to your app root so tools can omit `project_path` |
+| 4 | Restart Claude Desktop after every config change |
+
+The server is **stdio-only** (no network port). Tools: `doctor`, `inject_credential`, `mint_admin_token` (requires `KEYSMITH_OPEN_CASE_ADMIN_URL` or `OPEN_CASE_ADMIN_URL` for mint).
+
+---
+
+## Cryptographic receipts (v0.4)
+
+KeySmith can append **Ed25519-signed JSON lines** for lifecycle events (connect, inject, rotate, guided health check). This is a **local audit trail** — **receipts, not verdicts**: they attest that KeySmith recorded an event, not that a third party blessed it.
+
+- **Log:** `~/.keysmith/receipts/<scanned-project>.jsonl` (one JSON object per line)  
+- **Signing key:** stored in the OS keychain under account `receipt-signing-key:<project>` (PEM-encoded Ed25519 private key)  
+- **Payload:** never includes raw secrets — handles, fingerprints, and action labels only  
+
+```bash
+keysmith receipts --project-path /path/to/app
+keysmith receipts --project-path /path/to/app --verify
+```
+
 ---
 
 ## CLI commands
@@ -197,6 +223,7 @@ Restart Claude Desktop after edits. The `doctor` tool returns `project_path`, `e
 | `keysmith audit-unused [--days 90]` | Handles tracked in `~/.keysmith/usage.json` stale N+ days |
 | `keysmith set-rotation <slug> [--days N] [--project-path DIR]` | Rotation reminder cadence (`~/.keysmith/rotation.json`) |
 | `keysmith check-rotation` | Overdue vs next-7-days reminders |
+| `keysmith receipts [--project-path DIR] [--verify]` | Show (and optionally verify) signed JSONL event receipts |
 
 ---
 
@@ -216,6 +243,12 @@ Restart Claude Desktop after edits. The `doctor` tool returns `project_path`, `e
 - **`ai-anomalies`** — ledger outliers (heavy implied daily rate vs span; resurfaced-quiet patterns). Not replacement for full audit trails.
 
 Everything above is **offline** — no external model API.
+
+---
+
+## v0.4 feature set
+
+- **Cryptographic receipts** — Ed25519-signed append-only JSONL for store / inject / rotate / guided health verification; **`keysmith receipts --verify`** validates signatures offline.
 
 ---
 

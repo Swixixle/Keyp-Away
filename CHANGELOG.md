@@ -2,6 +2,20 @@
 
 All notable changes to KeySmith will be documented in this file.
 
+## [0.4.0] - 2026-04-28
+
+### Added
+
+- Ed25519-signed receipt JSONL logs under `~/.keysmith/receipts/<project>.jsonl` for store, inject, rotate, guided health verification
+- Signing key PEM in OS keychain (`receipt-signing-key:<project>`)
+- **`keysmith receipts [--verify]`** to list events and verify signatures offline
+- Dependency on **`cryptography`**
+
+### Changed
+
+- **`mint-admin`** uses **`scan_project(Path.cwd()).project`** for the minted-token handle so it matches manifests and receipts
+- MCP tools use **`CredentialBroker(project_name=...)`** so receipts attach when applicable
+
 ## [0.3.1] - 2026-04-27
 
 ### Added — “AI” insights (offline heuristics)
@@ -60,6 +74,7 @@ All notable changes to KeySmith will be documented in this file.
 - MCP server for assistant integration
 - Explicit trust boundary: metadata to models, secrets in keychain only
 
+[0.4.0]: https://github.com/Swixixle/Keyp-Away/releases/tag/v0.4.0
 [0.3.1]: https://github.com/Swixixle/Keyp-Away/releases/tag/v0.3.1
 [0.3.0]: https://github.com/Swixixle/Keyp-Away/releases/tag/v0.3.0
 [0.2.3]: https://github.com/Swixixle/Keyp-Away/releases/tag/v0.2.3

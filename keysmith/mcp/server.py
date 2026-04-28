@@ -17,7 +17,7 @@ def main() -> None:
 
     import httpx
 
-    from keysmith.broker.vault import CredentialBroker
+    from keysmith.broker.vault import CredentialBroker, project_from_handle_uri
     from keysmith.scanner.detector import scan_project
 
     mcp_app = FastMCP("KeySmith")
@@ -51,7 +51,7 @@ def main() -> None:
                 }
 
             manifest = scan_project(path)
-            broker = CredentialBroker()
+            broker = CredentialBroker(project_name=manifest.project)
             creds: dict[str, dict[str, object]] = {}
 
             for name, info in sorted(manifest.credentials.items()):
@@ -124,7 +124,8 @@ def main() -> None:
     async def inject_credential(handle: str, target_env: str) -> dict[str, object]:
         """Load the secret referenced by ``handle`` into ``target_env`` for this process only."""
 
-        broker = CredentialBroker()
+        proj = project_from_handle_uri(handle)
+        broker = CredentialBroker(project_name=proj) if proj else CredentialBroker()
         ok = broker.inject(handle, target_env)
         return {"injected": ok, "env_var": target_env}
 
@@ -160,7 +161,7 @@ def main() -> None:
         if not isinstance(raw, str) or not raw.strip():
             return {"ok": False, "error": "no token field"}
         uri = _handle(project, "open-case-admin-token")
-        broker = CredentialBroker()
+        broker = CredentialBroker(project_name=project)
         h = broker.store(uri, raw.strip())
         return {"ok": True, "handle_uri": h.uri, "fingerprint": h.fingerprint}
 
