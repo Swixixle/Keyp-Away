@@ -126,8 +126,10 @@ def main() -> None:
 
         proj = project_from_handle_uri(handle)
         broker = CredentialBroker(project_name=proj) if proj else CredentialBroker()
-        ok = broker.inject(handle, target_env)
-        return {"injected": ok, "env_var": target_env}
+        ok, err = broker.inject(handle, target_env)
+        if not ok:
+            return {"injected": False, "env_var": target_env, "error": err or "inject failed"}
+        return {"injected": True, "env_var": target_env}
 
     @mcp_app.tool()
     async def mint_admin_token(project: str, ttl_minutes: int = 60) -> dict[str, object]:

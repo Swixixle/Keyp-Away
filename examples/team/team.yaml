@@ -1,0 +1,48 @@
+# Example team configuration
+# Copy to your project: .keysmith/team.yaml
+
+team:
+  name: my-team
+
+  members:
+    # Team lead / admin
+    - name: Alice Admin
+      email: alice@example.com
+      role: admin
+      pubkey: age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p
+
+    # Developer
+    - name: Bob Developer
+      email: bob@example.com
+      role: developer
+      pubkey: age1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijk
+
+  settings:
+    # Generate receipts for all team operations
+    require_receipts: true
+
+    # Default rotation interval (can be overridden per credential)
+    default_rotation_days: 90
+
+    # Require health checks before marking credentials as valid
+    health_check_required: true
+
+  credential_sharing:
+    # Encryption method (currently only 'age' supported)
+    method: age
+
+    # Credentials that CAN be shared via encrypted files
+    shared_credentials:
+      - fec
+      - congress_gov
+      - propublica
+
+    # Credentials that MUST be personal (never shared)
+    # These are typically:
+    # - AI provider keys (anthropic, openai, gemini)
+    # - Personal access tokens
+    # - Admin credentials
+    personal_credentials:
+      - anthropic
+      - openai
+      - admin

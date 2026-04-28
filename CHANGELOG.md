@@ -2,6 +2,24 @@
 
 All notable changes to KeySmith will be documented in this file.
 
+## [0.5.1] - 2026-04-28
+
+### Added
+
+- Rotation policy enforcement on **`inject`** when `.keysmith/rotation-policy.yaml` sets **`settings.enforce: true`**, using **`~/.keysmith/rotation.json`** `next_rotation` plus **`grace_period_days`**
+- **`inject --skip-rotation-check`** and **`--project-path`** to choose the repo checked for YAML (alternatively **`KEYSMITH_DEFAULT_PROJECT`**)
+- Example team scaffolding under **`examples/team/`** (copy into `.keysmith/`)
+- README guidance for **commits vs ignoring** `.keysmith/secrets/`
+
+### Changed
+
+- **`inject`** returns a structured refusal message when overdue past grace; **`team check-rotation`** shows enforcement + BLOCKED/overdue/upcoming grouping
+- MCP **`inject_credential`** returns an **`error`** field when injection fails
+
+### Fixed
+
+- Clearer remediation output for overdue rotation refusal
+
 ## [0.5.0] - 2026-04-27
 
 ### Added

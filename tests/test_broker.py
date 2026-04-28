@@ -1,6 +1,8 @@
 """Tests for credential broker."""
 
+import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -30,7 +32,8 @@ def test_verify_returns_handle_not_secret(fake_secret: None) -> None:
 def test_inject_sets_env_var() -> None:
     broker = CredentialBroker()
     old = dict(os.environ)
-    broker.inject("sec://open-case/fec/api-key", "FEC_API_KEY")
+    ok, err = broker.inject("sec://open-case/fec/api-key", "FEC_API_KEY")
+    assert ok and err is None
     assert os.environ.get("FEC_API_KEY") == "supersecret-value"
     os.environ.clear()
     os.environ.update(old)
@@ -50,3 +53,72 @@ def test_slug_from_handle_uri() -> None:
     from keysmith.broker.vault import slug_from_handle_uri
 
     assert slug_from_handle_uri("sec://open-case/fec/api-key") == "fec"
+
+
+@pytest.mark.usefixtures("fake_secret")
+def test_inject_blocked_when_enforced_overdue(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_secret: None,
+) -> None:
+    kd = tmp_path / ".keysmith"
+    kd.mkdir(parents=True)
+    (kd / "rotation-policy.yaml").write_text(
+        "settings:\n  enforce: true\n  grace_period_days: 7\npolicies:\n  fec: {rotation_days: 90}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    home = tmp_path / "homedir"
+    home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    smith = home / ".keysmith"
+    smith.mkdir()
+    handle_uri = "sec://open-case/fec/api-key"
+    rot = {
+        handle_uri: {
+            "handle": handle_uri,
+            "rotation_days": 30,
+            "last_rotated": "2020-01-01T00:00:00",
+            "next_rotation": "2020-01-10T00:00:00",
+        }
+    }
+    (smith / "rotation.json").write_text(json.dumps(rot), encoding="utf-8")
+
+    broker = CredentialBroker()
+    ok, err = broker.inject(handle_uri, "FEC_API_KEY")
+    assert ok is False
+    assert err and "OVERDUE" in err
+
+
+@pytest.mark.usefixtures("fake_secret")
+def test_inject_skips_rotation_check(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fake_secret: None,
+) -> None:
+    kd = tmp_path / ".keysmith"
+    kd.mkdir(parents=True)
+    (kd / "rotation-policy.yaml").write_text(
+        "settings:\n  enforce: true\npolicies:\n  fec: {rotation_days: 90}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    home = tmp_path / "homedir"
+    home.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    smith = home / ".keysmith"
+    smith.mkdir()
+    handle_uri = "sec://open-case/fec/api-key"
+    rot = {
+        handle_uri: {
+            "handle": handle_uri,
+            "rotation_days": 30,
+            "last_rotated": "2020-01-01T00:00:00",
+            "next_rotation": "2020-01-10T00:00:00",
+        }
+    }
+    (smith / "rotation.json").write_text(json.dumps(rot), encoding="utf-8")
+
+    broker = CredentialBroker()
+    ok, err = broker.inject(handle_uri, "FEC_VAR", skip_rotation_check=True)
+    assert ok is True and err is None

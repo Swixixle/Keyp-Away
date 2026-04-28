@@ -10,7 +10,7 @@ from pathlib import Path
 import click
 import httpx
 
-from keysmith.broker.vault import CredentialBroker, SecretHandle, project_from_handle_uri
+from keysmith.broker.vault import CredentialBroker, SecretHandle, project_from_handle_uri, slug_from_handle_uri
 from keysmith.logging_config import SecretRedactionFilter, configure_safe_logging
 from keysmith.models import CredentialEntry, CredentialManifest
 from keysmith.providers.loader import get_signup_url
@@ -599,17 +599,53 @@ def connect(credential_name: str, project_path: str) -> None:
 @cli.command("inject")
 @click.argument("handle_uri")
 @click.argument("target_env")
-def inject(handle_uri: str, target_env: str) -> None:
+@click.option(
+    "--project-path",
+    default=None,
+    type=click.Path(exists=True, file_okay=False),
+    help="Repo root containing .keysmith/rotation-policy.yaml (default: cwd or KEYSMITH_DEFAULT_PROJECT).",
+)
+@click.option(
+    "--skip-rotation-check",
+    is_flag=True,
+    help="Bypass rotation enforcement (settings.enforce + grace) for this injection.",
+)
+def inject(
+    handle_uri: str,
+    target_env: str,
+    project_path: str | None,
+    skip_rotation_check: bool,
+) -> None:
     """Load a keychain-backed handle into TARGET_ENV for this shell process."""
+    from keysmith.broker.vault import resolve_rotation_policy_root
+
     proj = project_from_handle_uri(handle_uri)
     broker = CredentialBroker(project_name=proj) if proj else CredentialBroker()
-    ok = broker.inject(handle_uri, target_env)
+    explicit_root = resolve_rotation_policy_root(Path(project_path).resolve()) if project_path else None
+
+    ok, err = broker.inject(
+        handle_uri,
+        target_env,
+        skip_rotation_check=skip_rotation_check,
+        project_root_for_policy=explicit_root,
+    )
+
     if not ok:
-        click.echo(
-            "Failed: unknown handle or no secret stored in OS keychain for this URI.",
-            err=True,
-        )
+        assert err is not None
+        click.echo(f"✗ {err}", err=True)
+        if err == "Credential not found in keychain":
+            click.echo(
+                "Failed: unknown handle or no secret stored in OS keychain for this URI.",
+                err=True,
+            )
+        elif "OVERDUE" in err:
+            slug = slug_from_handle_uri(handle_uri) or "credential"
+            click.echo("\nTo rotate:", err=True)
+            click.echo(f"  keysmith setup {slug}", err=True)
+            click.echo("\nOr bypass (NOT RECOMMENDED):", err=True)
+            click.echo(f"  keysmith inject {handle_uri} {target_env} --skip-rotation-check", err=True)
         raise SystemExit(1)
+
     click.echo(f"✓ Loaded into environment variable {target_env}")
 
 

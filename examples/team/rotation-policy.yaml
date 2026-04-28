@@ -1,0 +1,47 @@
+# Example team rotation policy
+# Copy to your project: .keysmith/rotation-policy.yaml
+
+# Per-credential rotation policies
+policies:
+  # Public data APIs — low risk
+  fec:
+    rotation_days: 180
+    risk_level: low
+    reason: "Public data API, read-only access"
+
+  congress_gov:
+    rotation_days: 180
+    risk_level: low
+    reason: "Public data API, read-only access"
+
+  # General APIs — medium risk
+  propublica:
+    rotation_days: 90
+    risk_level: medium
+    reason: "News API with moderate access"
+
+  # AI providers — high risk
+  anthropic:
+    rotation_days: 30
+    risk_level: high
+    reason: "AI provider with write access, monthly rotation required"
+
+  openai:
+    rotation_days: 30
+    risk_level: high
+    reason: "AI provider with write access, monthly rotation required"
+
+  # Admin/production — critical risk
+  admin:
+    rotation_days: 14
+    risk_level: critical
+    reason: "Admin access to production systems, bi-weekly rotation required"
+
+# Global enforcement settings
+settings:
+  # Enforce rotation policies (block operations on overdue credentials)
+  enforce: true
+
+  # Grace period before blocking (days after rotation due date)
+  # During grace period, inject is allowed but warnings are printed
+  grace_period_days: 7

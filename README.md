@@ -220,6 +220,56 @@ keysmith team receive fec
 keysmith team check-rotation
 ```
 
+### Git configuration
+
+**What to commit:**
+
+- `.keysmith/team.yaml` — team configuration
+- `.keysmith/credentials.yaml` — required credentials manifest
+- `.keysmith/rotation-policy.yaml` — shared rotation policies
+- `.keysmith-receipts/events.jsonl` — team audit trail
+- `.keysmith/secrets/*.age` — encrypted secrets (**optional**, see modes below)
+
+**Recommended `.gitignore`:**
+
+```gitignore
+# KeySmith team secrets (if you prefer NOT to commit encrypted secrets)
+.keysmith/secrets/
+
+# Personal KeySmith data (never commit these)
+.keysmith-local/
+*.key
+team-identity.age
+```
+
+**Two sharing modes**
+
+- **Commit encrypted blobs** — easier onboarding: do **not** ignore `.keysmith/secrets/`; new members `git pull` then `keysmith team receive <slug>`. Fits small trusted teams.
+- **Manual distribution** — add `.keysmith/secrets/` to `.gitignore` and ship `.age` files over another channel (1Password, Signal, …). Fits public repos or stricter policies.
+
+Encrypted age files reveal ciphertext only — still, some organizations forbid *any* secret material in Git; respect your policy.
+
+### Quick start: team setup
+
+Example files live under `examples/team/`.
+
+```bash
+mkdir -p .keysmith
+cp examples/team/team.yaml .keysmith/
+cp examples/team/rotation-policy.yaml .keysmith/
+cp examples/team/.gitignore .
+
+# Edit team.yaml (members + pubkeys)
+vim .keysmith/team.yaml
+
+keysmith team init
+
+# Share your pubkey with the team lead; then commit tracked files
+git add .keysmith/ .gitignore
+git commit -m "Initialize team credential configuration"
+git push
+```
+
 ---
 
 ## CLI commands
@@ -231,7 +281,7 @@ keysmith team check-rotation
 | `keysmith rotation-done <slug> [--project-path DIR]` | Mark rotated (advance next reminder; requires `set-rotation` first) |
 | `keysmith setup <registry_key> [--project-path DIR]` | Guided: browser, clipboard or hidden paste, health check |
 | `keysmith connect <slug\|ENV_NAME> --project-path DIR` | Manual store (hidden prompt) |
-| `keysmith inject <handle_uri> <TARGET_ENV>` | Load keychain secret into `os.environ` |
+| `keysmith inject <handle_uri> <TARGET_ENV> [--project-path DIR] [--skip-rotation-check]` | Load keychain secret into `os.environ`; **blocks** when `rotation-policy.yaml` sets `enforce: true` and `~/.keysmith/rotation.json` is overdue past grace |
 | `keysmith mint-admin [--ttl N] [--base-url URL]` | Mint admin JWT and store handle |
 | `keysmith install-hook [--repo-path DIR]` | Git pre-commit hook: block likely staged secrets |
 | `keysmith scrub-history [--dry-run]` | Remove secret-shaped lines from shell history backups (`.bak`) |
@@ -248,11 +298,12 @@ keysmith team check-rotation
 | `keysmith team status` | Team + credentials vs keychain / `.env` / `.age` |
 | `keysmith team share <slug>` | Age-encrypt keychain secret to `.keysmith/secrets/<slug>.age`; team receipt |
 | `keysmith team receive <slug>` | Decrypt committed `.age` into keychain |
-| `keysmith team check-rotation` | Compare `rotation-policy.yaml` to local rotation reminders |
+| `keysmith team check-rotation` | Team rotation overview (enforcement, grace vs `inject` blocking) |
 
 ---
 
 ## v0.2 feature set
+
 
 - Pre-commit staged secret heuristic (`install-hook`), shell-history scrubbing, heuristic over-scope hints  
 - **Usage ledger** — `doctor`/`verify`, `inject`, and `store` bump `~/.keysmith/usage.json` (handles only); `audit-unused` surfaces stale credentials  
@@ -280,6 +331,13 @@ Everything above is **offline** — no external model API.
 ## v0.5 feature set
 
 - **`keysmith team`** — checked-in `team.yaml`, optional `credentials.yaml` and `rotation-policy.yaml`, **age** ciphertext under `.keysmith/secrets/`, and `.keysmith-receipts/events.jsonl` for credential-share events (Ed25519 + optional `actor`). See [Team coordination (git-first, v0.5)](#team-coordination-git-first-v05).
+
+---
+
+## v0.5.1 feature set
+
+- **Git / examples** — `examples/team/` sample configs plus README guidance on ciphertext in-repo vs distributing `.age` out-of-band.
+- **Rotation enforcement** — `inject` respects `.keysmith/rotation-policy.yaml` `settings.enforce` and grace vs `~/.keysmith/rotation.json`; **`--skip-rotation-check`**; **`team check-rotation`** shows BLOCKED alongside policy.
 
 ---
 

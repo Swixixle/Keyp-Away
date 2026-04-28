@@ -1,0 +1,15 @@
+# KeySmith team secrets
+#
+# Two modes:
+# 1. Commit encrypted secrets (easier onboarding)
+#    → Comment out / remove .keysmith/secrets/ below
+#
+# 2. Manual secret distribution (more paranoid)
+#    → Keep this ignore file as-is when copying examples
+
+.keysmith/secrets/
+
+# Personal KeySmith data (NEVER commit)
+.keysmith-local/
+*.key
+team-identity.age

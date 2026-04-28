@@ -95,6 +95,10 @@ class RotationScheduler:
                 overdue.append(pol)
         return sorted(overdue, key=lambda pl: pl.next_rotation)
 
+    def get_policy(self, handle: str) -> RotationPolicy | None:
+        """Return the saved rotation row for ``handle``, if any."""
+        return self._load().get(handle)
+
     def check_upcoming(self, days: int = 7) -> list[RotationPolicy]:
         """Policies whose next_rotation is between now + epsilon and now + horizon (not overdue)."""
         all_p = self._load()

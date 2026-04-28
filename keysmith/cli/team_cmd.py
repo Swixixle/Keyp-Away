@@ -258,7 +258,7 @@ def team_receive(credential_slug: str, project_path: str) -> None:
 @team_cli.command("check-rotation")
 @click.option("--project-path", default=".", type=click.Path(exists=True, file_okay=False))
 def team_check_rotation(project_path: str) -> None:
-    """Compare ``rotation-policy.yaml`` hints with saved rotation reminders."""
+    """Compare ``rotation-policy.yaml`` with saved reminders and enforcement settings."""
 
     root = _resolve_root(project_path)
     pol_path = rotation_policy_yaml(root)
@@ -267,50 +267,102 @@ def team_check_rotation(project_path: str) -> None:
         raise SystemExit(1)
 
     raw = _load_yaml(pol_path)
-    policies = raw.get("policies")
-    if not isinstance(policies, dict) or not policies:
+    policies_cfg = raw.get("policies")
+    if not isinstance(policies_cfg, dict) or not policies_cfg:
         click.echo("rotation-policy.yaml has no `policies` entries.")
         return
+
+    settings = raw["settings"] if isinstance(raw.get("settings"), dict) else {}
+    enforce = bool(settings.get("enforce", False))
+    grace_days_raw = settings.get("grace_period_days", 7)
+    if isinstance(grace_days_raw, float):
+        grace_days_raw = int(grace_days_raw)
+    grace_days: int = grace_days_raw if isinstance(grace_days_raw, int) and grace_days_raw >= 0 else 7
 
     manifest = scan_project(root)
     sched = RotationScheduler()
     local = sched._load()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
 
-    click.echo(f"Team rotation checklist (manifest project={manifest.project})\n")
+    risk_icon_map = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🟢"}
+    overdue: list[tuple[str, str]] = []
+    upcoming: list[tuple[str, str]] = []
+    ok_grp: list[tuple[str, str]] = []
 
-    for slug, row in sorted(policies.items()):
-        if not isinstance(row, dict):
+    click.echo(f"Team Rotation Status: {manifest.project}")
+    click.echo(f"Enforcement: {'ENABLED' if enforce else 'DISABLED'}")
+    if enforce:
+        click.echo(f"Grace period: {grace_days} days")
+    click.echo()
+
+    for slug_raw, policy_config in sorted(policies_cfg.items()):
+        if not isinstance(policy_config, dict):
             continue
-        td_raw = row.get("rotation_days")
-        td: int | None = int(td_raw) if isinstance(td_raw, (int, float)) else None
-        handle = _handle(manifest.project, str(slug))
-        explain = str(row.get("reason", "")).strip()
+        slug = str(slug_raw)
+        handle = _handle(manifest.project, slug)
         pol_obj = local.get(handle)
-        if td is not None and explain:
-            yhint = f"{td}d — {explain}"
-        elif td is not None:
-            yhint = f"{td}d target"
-        else:
-            yhint = "see YAML"
+        rk = str(policy_config.get("risk_level", "medium")).lower()
+        ric = risk_icon_map.get(rk, "🟡")
 
         if not pol_obj:
-            click.echo(f"○ {slug}: no local policy yet (`keysmith set-rotation {slug} --days …`)")
-            click.echo(f"   Team file: {yhint}")
-            click.echo()
+            click.echo(
+                f"⚠️  {slug}: No rotation tracking (run `keysmith set-rotation {slug} --days N`)"
+            )
             continue
 
         try:
             nxt = datetime.fromisoformat(pol_obj.next_rotation.replace("Z", "+00:00"))
-            if nxt.tzinfo is None:
-                nxt = nxt.replace(tzinfo=timezone.utc)
+            if nxt.tzinfo is not None:
+                nxt = nxt.replace(tzinfo=None)
         except ValueError:
             click.echo(f"? {slug}: bad next_rotation in rotation.json")
-            click.echo()
             continue
 
-        overdue = now > nxt
-        icon = "🔴" if overdue else "🟢"
-        click.echo(f"{icon} {slug}: next_rotation={pol_obj.next_rotation.split('T')[0]}")
-        click.echo(f"   Team policy: {yhint}")
+        try:
+            last_ts = datetime.fromisoformat(pol_obj.last_rotated.replace("Z", "+00:00"))
+            if last_ts.tzinfo is not None:
+                last_ts = last_ts.replace(tzinfo=None)
+        except ValueError:
+            last_ts = now
+
+        days_since = max(0, (now - last_ts).days)
+        days_until = (nxt - now).days
+
+        if days_until < 0:
+            days_od = abs(days_until)
+            if enforce and days_od > grace_days:
+                status = f"{ric} 🔴 BLOCKED (overdue by {days_od}d, exceeds grace period)"
+            else:
+                status = f"{ric} 🔴 OVERDUE by {days_od}d"
+            overdue.append((slug, status))
+        elif days_until <= 14:
+            upcoming.append((slug, f"{ric} ⚠️ Due in {days_until}d (last rotated {days_since}d ago)"))
+        else:
+            ok_grp.append((slug, f"{ric} ✓ OK (due in {days_until}d, last rotated {days_since}d ago)"))
+
+    if overdue:
+        click.echo("OVERDUE:")
+        for slug, status in overdue:
+            click.echo(f"  {slug}: {status}")
         click.echo()
+
+    if upcoming:
+        click.echo("UPCOMING:")
+        for slug, status in upcoming:
+            click.echo(f"  {slug}: {status}")
+        click.echo()
+
+    if ok_grp:
+        click.echo("OK:")
+        for slug, status in ok_grp:
+            click.echo(f"  {slug}: {status}")
+        click.echo()
+
+    oc = len(overdue)
+    if oc and enforce:
+        click.echo(f"⚠️  {oc} credential(s) BLOCKED for inject until rotated (beyond grace)")
+    elif oc:
+        click.echo(f"⚠️  {oc} credential(s) overdue — please rotate soon")
+
+    if not overdue and not upcoming:
+        click.echo("✅ All tracked credentials within rotation window")
