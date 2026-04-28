@@ -136,16 +136,47 @@ def check_staged_files() -> int:
     if not all_bad:
         return 0
 
-    print("[keysmith] Commit blocked — possible secrets in staged files\n", file=sys.stderr)
-    for path, findings in all_bad:
-        print(f"{path}", file=sys.stderr)
+    lines = [
+        "=" * 60,
+        "🚨 COMMIT BLOCKED: Secrets detected in staged files",
+        "=" * 60,
+        "",
+    ]
+    for fp, findings in all_bad:
+        lines.append(f"📄 {fp}")
         for label, lineno, excerpt in findings:
-            print(f"  Line {lineno} ({label}):", file=sys.stderr)
-            print(f"  > {excerpt[:120]}", file=sys.stderr)
-        print("", file=sys.stderr)
+            lines.append(f"   Line {lineno}: {label}")
+            masked = excerpt[:40] + "..." if len(excerpt) > 40 else excerpt
+            lines.append(f"   > {masked}")
+        lines.append("")
 
-    print("Fix: remove secrets, use env files (not committed) or keysmith keychain handles.", file=sys.stderr)
-    print("Bypass (not recommended): git commit --no-verify", file=sys.stderr)
+    lines.extend(
+        [
+            "=" * 60,
+            "How to fix:",
+            "=" * 60,
+            "",
+            "1. Remove secrets from code:",
+            "   • Use environment variables instead",
+            "   • Store in .env (add to .gitignore)",
+            "",
+            "2. Store secrets securely:",
+            "   keysmith setup <provider>",
+            "",
+            "3. Clean shell history if you typed secrets:",
+            "   keysmith scrub-history --dry-run",
+            "",
+            "4. Try committing again:",
+            "   git commit",
+            "",
+            "=" * 60,
+            "To bypass (NOT RECOMMENDED):",
+            "   git commit --no-verify",
+            "=" * 60,
+            "",
+        ]
+    )
+    sys.stderr.write("\n".join(lines) + "\n")
     return 1
 
 

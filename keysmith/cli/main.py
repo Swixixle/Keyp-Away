@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime
 from pathlib import Path
 
 import click
@@ -139,6 +140,111 @@ def check_rotation() -> None:
     raise SystemExit(rotation_cli_main())
 
 
+@cli.command("rotation-done")
+@click.argument("credential_slug")
+@click.option("--project-path", default=".", type=click.Path(exists=True, file_okay=False))
+def rotation_done(credential_slug: str, project_path: str) -> None:
+    """Reset rotation timer after you replaced a credential in the OS keychain."""
+
+    from keysmith.rotation.scheduler import RotationScheduler
+
+    path = Path(project_path).resolve()
+    manifest = scan_project(path)
+    slug = _resolve_cred_slug(manifest, credential_slug)
+    if slug is None:
+        click.echo(f"Unknown credential '{credential_slug}'. Run `keysmith doctor` first.", err=True)
+        raise SystemExit(1)
+    handle = _handle_for(manifest.project, slug)
+    scheduler = RotationScheduler()
+    pol = scheduler._load().get(handle)
+    if not pol:
+        click.echo(f"❌ No rotation policy set for {handle}.", err=True)
+        click.echo(f"   Set one with: keysmith set-rotation {slug} --days N")
+        raise SystemExit(1)
+
+    scheduler.mark_rotated(handle)
+    updated = scheduler._load()[handle]
+    next_rotation = datetime.fromisoformat(updated.next_rotation).strftime("%Y-%m-%d")
+    click.echo(f"✅ Marked {handle} as rotated")
+    click.echo(f"   Next rotation: {next_rotation}")
+
+
+@cli.command("summary")
+@click.option("--project-path", default=".", type=click.Path(exists=True, file_okay=False))
+@click.option("--skip-health", is_flag=True, help="Skip provider HTTP checks (faster).")
+def summary(project_path: str, skip_health: bool) -> None:
+    """At-a-glance credential posture for this scanned project."""
+
+    from keysmith.audit.scope import check_scope_overuse
+    from keysmith.audit.usage import check_unused_credentials
+    from keysmith.rotation.scheduler import check_rotation_status
+
+    path = Path(project_path).resolve()
+    manifest = scan_project(path)
+    broker = CredentialBroker()
+
+    in_keychain = in_env_only = invalid_or_err = missing = 0
+    for cred_name, cred_info in sorted(manifest.credentials.items()):
+        handle = _handle_for(manifest.project, cred_name)
+        in_env = _env_marked_present(manifest, cred_info.env)
+        prov = cred_info.provider if not skip_health else None
+        st = broker.verify(
+            handle,
+            provider_for_health=prov,
+            dotenv_reports_present=in_env,
+        )
+        if st.status == "valid":
+            in_keychain += 1
+        elif st.status == "present_dotenv":
+            in_env_only += 1
+        elif st.status in ("invalid", "error"):
+            invalid_or_err += 1
+        else:
+            missing += 1
+
+    total = len(manifest.credentials)
+    proj = manifest.project
+    click.echo(f"Credential health summary: {proj}\n")
+    click.echo(f"Total credentials detected: {total}")
+    click.echo(f"  ✓ In keychain (validated): {in_keychain}")
+    click.echo(f"  ○ In .env files: {in_env_only}")
+    if invalid_or_err:
+        click.echo(f"  ⚠️  Invalid/error: {invalid_or_err}")
+    click.echo(f"  ✗ Missing: {missing}")
+    click.echo()
+
+    issues: list[str] = []
+    unused = check_unused_credentials(days=90)
+    prefix = f"sec://{proj}/"
+    unused_here = [(h, d) for h, d in unused if h.startswith(prefix)]
+    if unused_here:
+        issues.append(f"{len(unused_here)} stale handle(s) in usage.json (90d+) for this project")
+
+    scopes = check_scope_overuse(path)
+    if scopes:
+        issues.append(f"{len(scopes)} possible over-scope warning(s) (heuristic)")
+
+    rot = check_rotation_status()
+    overdue_here = [p for p in rot["overdue"] if p.handle.startswith(prefix)]
+    upcoming_here = [p for p in rot["upcoming"] if p.handle.startswith(prefix)]
+    if overdue_here:
+        issues.append(f"🔴 {len(overdue_here)} credential(s) overdue for rotation")
+    elif upcoming_here:
+        issues.append(f"🟡 {len(upcoming_here)} credential(s) due soon")
+
+    if issues:
+        click.echo("Issues found:")
+        for line in issues:
+            click.echo(f"  ⚠️  {line}")
+        click.echo()
+        click.echo("Run specific audit commands for details:")
+        click.echo("  keysmith audit-unused")
+        click.echo("  keysmith audit-scope")
+        click.echo("  keysmith check-rotation")
+    else:
+        click.echo("✅ No issues detected")
+
+
 @cli.command("doctor")
 @click.option("--project-path", default=".", type=click.Path(exists=True, file_okay=False))
 @click.option(
@@ -146,11 +252,23 @@ def check_rotation() -> None:
     is_flag=True,
     help="Only check keychain presence, not provider HTTP health.",
 )
-def doctor(project_path: str, skip_health: bool) -> None:
+@click.option(
+    "--show-usage",
+    is_flag=True,
+    help="Append last-access ages and project-scoped rotation backlog.",
+)
+def doctor(project_path: str, skip_health: bool, show_usage: bool) -> None:
     """Scan project and show credential status."""
+
     path = Path(project_path).resolve()
     manifest = scan_project(path)
     broker = CredentialBroker()
+
+    from keysmith.audit.usage import UsageTracker
+
+    usage_tracker = UsageTracker() if show_usage else None
+
+    proj_prefix = f"sec://{manifest.project}/"
 
     click.echo("Credential Status\n")
 
@@ -175,20 +293,49 @@ def doctor(project_path: str, skip_health: bool) -> None:
         else:
             sym, label = "✗", "missing"
 
-        click.echo(f"{sym} {cred_info.env:30} {label:22} {st.fingerprint}")
+        line = f"{sym} {cred_info.env:30} {label:22} {st.fingerprint}"
+        if usage_tracker:
+            usage = usage_tracker.get_usage(handle)
+            if usage:
+                try:
+                    last_used = datetime.fromisoformat(usage.last_accessed)
+                    days_ago = (datetime.now() - last_used).days
+                    line += f"  (used {days_ago}d ago)"
+                except ValueError:
+                    pass
+
+        click.echo(line)
         computed.append((cred_info, cred_name, st))
 
-    click.echo("\nSuggested fixes:")
+    if show_usage:
+        from keysmith.rotation.scheduler import RotationScheduler
+
+        overdue = [
+            p
+            for p in RotationScheduler().check_due()
+            if str(p.handle).startswith(proj_prefix)
+        ]
+        if overdue:
+            click.echo(f"\n⚠️  {len(overdue)} credential(s) overdue for rotation:")
+            for pol in overdue:
+                click.echo(f"   🔴 {pol.handle}")
+
+    fixes: list[str] = []
     for cred_info, slug, st in computed:
         in_env = _env_marked_present(manifest, cred_info.env)
         if st.status == "missing" and not in_env:
-            click.echo(f"  keysmith connect {slug} --project-path {path}")
+            fixes.append(f"  keysmith connect {slug} --project-path {path}")
         elif st.status == "invalid" and cred_info.provider:
             su = get_signup_url(str(cred_info.provider))
             if su:
-                click.echo(f"  Replace or renew {cred_info.env} (signup: {su})")
+                fixes.append(f"  Renew {cred_info.env} (signup: {su})")
             else:
-                click.echo(f"  Replace or renew {cred_info.env}")
+                fixes.append(f"  Renew or replace {cred_info.env}")
+
+    if fixes:
+        click.echo("\nSuggested fixes:")
+        for row in fixes:
+            click.echo(row)
 
 
 @cli.command("setup")

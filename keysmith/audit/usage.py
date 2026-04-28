@@ -78,6 +78,9 @@ class UsageTracker:
                 stale.append((handle, usage))
         return stale
 
+    def get_usage(self, handle: str) -> CredentialUsage | None:
+        return self._load().get(handle)
+
 
 def check_unused_credentials(
     *,

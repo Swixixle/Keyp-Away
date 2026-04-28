@@ -150,7 +150,9 @@ Restart Claude Desktop after edits. The `doctor` tool returns `project_path`, `e
 
 | Command | Purpose |
 |--------|---------|
-| `keysmith doctor [--project-path DIR] [--skip-health]` | Scan code + env files; keychain + optional provider health |
+| `keysmith summary [--project-path DIR] [--skip-health]` | At-a-glance counts + unused/over-scope/rotation notices |
+| `keysmith doctor [--project-path DIR] [--skip-health] [--show-usage]` | Scan code + env; optional last-access hints + rotation backlog |
+| `keysmith rotation-done <slug> [--project-path DIR]` | Mark rotated (advance next reminder; requires `set-rotation` first) |
 | `keysmith setup <registry_key> [--project-path DIR]` | Guided: browser, clipboard or hidden paste, health check |
 | `keysmith connect <slug\|ENV_NAME> --project-path DIR` | Manual store (hidden prompt) |
 | `keysmith inject <handle_uri> <TARGET_ENV>` | Load keychain secret into `os.environ` |
