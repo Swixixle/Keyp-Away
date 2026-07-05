@@ -325,6 +325,7 @@ def receipts_cmd(project_path: str, do_verify: bool) -> None:
         "credential_rotated": "🔄",
         "credential_verified": "✓",
         "credential_injected": "💉",
+        "credential_handed_off": "🤝",
     }
 
     for i, receipt in enumerate(all_receipts):
@@ -753,9 +754,10 @@ def connect(credential_name: str, project_path: str) -> None:
     click.echo(f"✓ Stored — {out.uri}  fingerprint {out.fingerprint}")
 
 
-@cli.command("inject")
+@cli.command("inject", context_settings={"ignore_unknown_options": True})
 @click.argument("handle_uri")
 @click.argument("target_env")
+@click.argument("command", nargs=-1, type=click.UNPROCESSED)
 @click.option(
     "--project-path",
     default=None,
@@ -770,10 +772,16 @@ def connect(credential_name: str, project_path: str) -> None:
 def inject(
     handle_uri: str,
     target_env: str,
+    command: tuple[str, ...],
     project_path: str | None,
     skip_rotation_check: bool,
 ) -> None:
-    """Load a keychain-backed handle into TARGET_ENV for this shell process."""
+    """Exec COMMAND with a keychain-backed handle resolved into TARGET_ENV in the child.
+
+    The secret enters only the exec'd child's environment, never the calling
+    shell. Usage: keysmith inject <handle> <ENV> -- <cmd> [args...]. On success
+    this process is replaced by COMMAND.
+    """
     from keysmith.broker.vault import resolve_rotation_policy_root
 
     proj = project_from_handle_uri(handle_uri)
@@ -783,6 +791,7 @@ def inject(
     ok, err = broker.inject(
         handle_uri,
         target_env,
+        tuple(command),
         skip_rotation_check=skip_rotation_check,
         project_root_for_policy=explicit_root,
     )
@@ -800,10 +809,15 @@ def inject(
             click.echo("\nTo rotate:", err=True)
             click.echo(f"  keysmith setup {slug}", err=True)
             click.echo("\nOr bypass (NOT RECOMMENDED):", err=True)
-            click.echo(f"  keysmith inject {handle_uri} {target_env} --skip-rotation-check", err=True)
+            cmd_str = " ".join(command)
+            click.echo(
+                f"  keysmith inject {handle_uri} {target_env} --skip-rotation-check -- {cmd_str}",
+                err=True,
+            )
         raise SystemExit(1)
 
-    click.echo(f"✓ Loaded into environment variable {target_env}")
+    # No success branch: a successful inject() replaces this process via
+    # os.execvpe and never returns here.
 
 
 @cli.command("mint-admin")
